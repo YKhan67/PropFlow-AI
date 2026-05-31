@@ -1,0 +1,155 @@
+"use client";
+
+import { Sidebar } from "@/components/layout/Sidebar";
+import { Header } from "@/components/layout/Header";
+import { StatsCard } from "@/components/dashboard/StatsCard";
+import { EquityChart } from "@/components/charts/EquityChart";
+import { MarketScanner } from "@/components/dashboard/MarketScanner";
+import { ActiveTrades } from "@/components/dashboard/ActiveTrades";
+import { Wallet, TrendingUp, AlertCircle, Activity, Play, Square } from "lucide-react";
+import { useDashboardData } from "@/hooks/useDashboardData";
+import { apiService } from "@/services/api";
+import { useState } from "react";
+
+export default function Dashboard() {
+  const { status, trades, markets, history, loading, error, refetch } = useDashboardData();
+  const [actionLoading, setActionLoading] = useState(false);
+
+  const handleToggleEngine = async () => {
+    if (!status) return;
+    setActionLoading(true);
+    try {
+      if (status.engine_running) {
+        await apiService.stopEngine();
+      } else {
+        await apiService.startEngine();
+      }
+      await refetch();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to toggle engine");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const accountMetrics = status?.account_metrics;
+
+  // Format history for EquityChart
+  const chartData = history.length > 0 
+    ? history.map(p => ({
+        time: new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        equity: p.equity
+      }))
+    : undefined;
+
+  return (
+    <div className="flex min-h-screen bg-[#0a0a0a] text-white">
+      <Sidebar />
+      
+      <main className="flex-1 overflow-y-auto">
+        <Header />
+        
+        <div className="p-8">
+          <div className="mb-8 flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold">Trading Overview</h1>
+              <p className="text-white/60 text-sm">
+                {loading ? "Loading system status..." : error ? `Error: ${error}` : status?.engine_running ? "Your bot is running smoothly." : "System is idle."}
+              </p>
+            </div>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={handleToggleEngine}
+                disabled={actionLoading || loading}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  status?.engine_running 
+                    ? "bg-rose-500/10 text-rose-400 hover:bg-rose-500/20" 
+                    : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+                } disabled:opacity-50`}
+              >
+                {status?.engine_running ? (
+                  <><Square className="h-4 w-4" /> Stop Engine</>
+                ) : (
+                  <><Play className="h-4 w-4" /> Start Engine</>
+                )}
+              </button>
+              <div className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium ${
+                status?.engine_running ? "bg-emerald-500/10 text-emerald-400" : "bg-white/5 text-white/40"
+              }`}>
+                <Activity className="h-4 w-4" />
+                <span className="text-sm font-medium">{status?.engine_running ? "System Online" : "System Offline"}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <StatsCard
+              title="Account Equity"
+              value={accountMetrics ? `$${accountMetrics.equity.toLocaleString()}` : "$0.00"}
+              change={accountMetrics ? `${((accountMetrics.equity - accountMetrics.balance) / accountMetrics.balance * 100).toFixed(2)}%` : undefined}
+              trend={accountMetrics && accountMetrics.equity >= accountMetrics.balance ? "up" : "down"}
+              icon={Wallet}
+              description="Total account value"
+            />
+            <StatsCard
+              title="Daily P&L"
+              value={accountMetrics ? `${accountMetrics.daily_pnl >= 0 ? '+' : ''}$${accountMetrics.daily_pnl.toLocaleString()}` : "$0.00"}
+              trend={accountMetrics && accountMetrics.daily_pnl >= 0 ? "up" : "down"}
+              icon={TrendingUp}
+              description="Current session profit"
+            />
+            <StatsCard
+              title="Current Drawdown"
+              value={accountMetrics ? `${accountMetrics.drawdown.toFixed(2)}%` : "0.00%"}
+              change="Limit: 5%"
+              trend="neutral"
+              icon={AlertCircle}
+              description="Against peak equity"
+            />
+            <StatsCard
+              title="Total Trades"
+              value={accountMetrics ? accountMetrics.total_trades.toString() : "0"}
+              change={accountMetrics ? `Win rate: ${accountMetrics.win_rate}%` : undefined}
+              trend="up"
+              icon={Activity}
+              description="Lifetime statistics"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+            <div className="lg:col-span-2 space-y-8">
+              <EquityChart data={chartData} />
+              <ActiveTrades 
+                data={trades.map(t => ({
+                  id: t.id,
+                  pair: t.symbol,
+                  type: t.type,
+                  lots: t.volume,
+                  profit: t.profit
+                }))}
+              />
+            </div>
+            <div className="space-y-8">
+              <MarketScanner 
+                data={markets.map(m => ({
+                  symbol: m.symbol,
+                  price: m.bid, // Using bid as display price
+                  change: `${m.change >= 0 ? '+' : ''}${m.change.toFixed(2)}%`,
+                  trend: m.trend
+                }))}
+              />
+              <div className="rounded-xl border border-white/10 bg-gradient-to-br from-emerald-500/20 to-blue-500/20 p-6">
+                <h3 className="font-bold text-white mb-2">Upgrade to Pro</h3>
+                <p className="text-sm text-white/60 mb-4">Get access to advanced AI strategies and multi-account management.</p>
+                <button className="w-full rounded-lg bg-emerald-500 py-2 text-sm font-bold text-white hover:bg-emerald-600 transition-colors">
+                  Upgrade Now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
