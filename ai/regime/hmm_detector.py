@@ -120,7 +120,8 @@ class RegimeHMM:
         names = self._feature_config.feature_names
 
         # Build a scoring heuristic per state
-        scores = {}
+        # scores[state_idx] = {"trending": score, "ranging": score, "volatile": score}
+        all_scores = {}
         for state_idx in range(self.config.n_states):
             score = {"trending": 0.0, "ranging": 0.0, "volatile": 0.0}
 
@@ -129,13 +130,11 @@ class RegimeHMM:
             for j, name in enumerate(names):
                 val = mean_vec[j]
                 if name == "adx":
-                    # High ADX → trending
                     if val > 0.5:
                         score["trending"] += 1.0
                     elif val < -0.5:
                         score["ranging"] += 0.5
                 elif name == "bb_width":
-                    # High BB width → volatile
                     if val > 0.5:
                         score["volatile"] += 1.5
                     elif val < -0.3:
@@ -151,29 +150,29 @@ class RegimeHMM:
                     elif val < -0.3:
                         score["ranging"] += 1.0
                 elif name == "rsi":
-                    # Extreme RSI → potentially volatile/trending
                     abs_rsi = abs(val)
                     if abs_rsi > 1.5:
                         score["trending"] += 0.5
 
-            # Determine winner for this state
-            winner = max(score, key=score.get)
-            scores[state_idx] = (winner, score[winner])
+            all_scores[state_idx] = score
 
-        # Handle conflicts: if two states map to the same label, assign secondary
+        # Assign unique labels using a greedy approach
         used_labels = set()
         assigned = {}
-        for state_idx in range(self.config.n_states):
-            candidates = sorted(
-                scores[state_idx][1].items(), key=lambda x: -x[1]
-            )
-            for label, _ in candidates:
+        # Process states in order of highest max score
+        order = sorted(all_scores.keys(),
+                       key=lambda s: max(all_scores[s].values()), reverse=True)
+        for state_idx in order:
+            score_dict = all_scores[state_idx]
+            # Try labels sorted by score descending, skip used ones
+            candidates = sorted(score_dict.items(), key=lambda x: -x[1])
+            for label, _score_val in candidates:
                 if label not in used_labels:
                     assigned[state_idx] = label
                     used_labels.add(label)
                     break
             else:
-                assigned[state_idx] = "ranging"  # fallback
+                assigned[state_idx] = "ranging"
 
         self._state_labels = assigned
 
