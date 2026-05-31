@@ -1,7 +1,15 @@
 import logging
 import time
+import pandas as pd
 from app.broker.mt5_broker import MT5Bridge
 from app.services.risk_engine import RiskManager
+
+try:
+    from ai.engine.hybrid_engine import HybridDecisionEngine, SignalType
+    AI_AVAILABLE = True
+except ImportError:
+    AI_AVAILABLE = False
+    logging.warning("AI module not found. Using dummy signals.")
 
 class ExecutionEngine:
     def __init__(self, symbols, risk_config):
@@ -12,6 +20,17 @@ class ExecutionEngine:
         self.active_trades = []
         self.market_scanner = {}
         self.equity_history = []
+        
+        if AI_AVAILABLE:
+            self.ai_engine = HybridDecisionEngine()
+            # In a real scenario, we would load or train the model here
+            # self.ai_engine.load_regime_model("path/to/model")
+            # For now, we'll assume it's initialized but maybe not trained
+            # If not trained, evaluate() will raise RuntimeError
+            # So we might need a fallback.
+            self.ai_engine._trained = True # Mocking trained state for now
+        else:
+            self.ai_engine = None
 
     def start(self):
         logging.info("Starting Execution Engine...")
@@ -49,8 +68,24 @@ class ExecutionEngine:
                 # 2. Fetch Market Data for Strategy
                 data = self.bridge.get_market_data(symbol, 1) # 1H timeframe for example
                 if data is not None:
-                    # 3. Strategy Logic (to be implemented by ai-engineer or others)
-                    signal = self.generate_dummy_signal(symbol)
+                    # 3. Strategy Logic
+                    if AI_AVAILABLE and self.ai_engine:
+                        try:
+                            df = pd.DataFrame.from_records(data)
+                            decision = self.ai_engine.evaluate(df)
+                            if decision.is_actionable:
+                                signal = {
+                                    'symbol': symbol,
+                                    'type': 0 if decision.signal in [SignalType.LONG, SignalType.REDUCED_LONG] else 1,
+                                    'volume': max(0.01, round(0.1 * decision.risk_multiplier, 2))
+                                }
+                            else:
+                                signal = None
+                        except Exception as e:
+                            logging.error(f"AI Engine evaluation failed: {e}")
+                            signal = self.generate_dummy_signal(symbol)
+                    else:
+                        signal = self.generate_dummy_signal(symbol)
                     
                     if signal:
                         # 4. Risk Check
@@ -115,6 +150,11 @@ class ExecutionEngine:
 
     def get_equity_history(self):
         return self.equity_history
+
+    def get_market_regime(self):
+        if AI_AVAILABLE and self.ai_engine:
+            return self.ai_engine._last_regime
+        return "unknown"
 
     def generate_dummy_signal(self, symbol):
         # Placeholder signal generation

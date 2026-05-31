@@ -55,7 +55,7 @@ export default function Dashboard() {
             <div>
               <h1 className="text-2xl font-bold">Trading Overview</h1>
               <p className="text-white/60 text-sm">
-                {loading ? "Loading system status..." : error ? `Error: ${error}` : status?.engine_running ? "Your bot is running smoothly." : "System is idle."}
+                {loading ? "Loading system status..." : error ? `Error: ${error}` : status?.engine_running ? `System Active - Regime: ${status.market_regime}` : "System is idle."}
               </p>
             </div>
             <div className="flex items-center gap-4">
@@ -86,34 +86,34 @@ export default function Dashboard() {
           <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
             <StatsCard
               title="Account Equity"
-              value={accountMetrics ? `$${accountMetrics.equity.toLocaleString()}` : "$0.00"}
-              change={accountMetrics ? `${((accountMetrics.equity - accountMetrics.balance) / accountMetrics.balance * 100).toFixed(2)}%` : undefined}
-              trend={accountMetrics && accountMetrics.equity >= accountMetrics.balance ? "up" : "down"}
+              value={status?.risk_status ? `${status.risk_status.current_equity.toLocaleString()}` : "$0.00"}
+              change={status?.risk_status ? `${((status.risk_status.current_equity - status.risk_status.starting_balance) / status.risk_status.starting_balance * 100).toFixed(2)}%` : undefined}
+              trend={status?.risk_status && status.risk_status.current_equity >= status.risk_status.starting_balance ? "up" : "down"}
               icon={Wallet}
               description="Total account value"
             />
             <StatsCard
-              title="Daily P&L"
-              value={accountMetrics ? `${accountMetrics.daily_pnl >= 0 ? '+' : ''}$${accountMetrics.daily_pnl.toLocaleString()}` : "$0.00"}
-              trend={accountMetrics && accountMetrics.daily_pnl >= 0 ? "up" : "down"}
+              title="Daily Drawdown"
+              value={status?.risk_status ? `${status.risk_status.daily_drawdown.toFixed(2)}%` : "0.00%"}
+              trend={status?.risk_status && status.risk_status.daily_drawdown < 5 ? "up" : "down"}
               icon={TrendingUp}
-              description="Current session profit"
+              description="Current session drawdown"
             />
             <StatsCard
-              title="Current Drawdown"
-              value={accountMetrics ? `${accountMetrics.drawdown.toFixed(2)}%` : "0.00%"}
-              change="Limit: 5%"
+              title="Total Drawdown"
+              value={status?.risk_status ? `${status.risk_status.total_drawdown.toFixed(2)}%` : "0.00%"}
+              change="Limit: 10%"
               trend="neutral"
               icon={AlertCircle}
-              description="Against peak equity"
+              description="Against starting balance"
             />
             <StatsCard
-              title="Total Trades"
-              value={accountMetrics ? accountMetrics.total_trades.toString() : "0"}
-              change={accountMetrics ? `Win rate: ${accountMetrics.win_rate}%` : undefined}
+              title="Active Trades"
+              value={status?.active_trades_count.toString() || "0"}
+              change={status?.market_regime ? `Regime: ${status.market_regime}` : undefined}
               trend="up"
               icon={Activity}
-              description="Lifetime statistics"
+              description="Current positions"
             />
           </div>
 

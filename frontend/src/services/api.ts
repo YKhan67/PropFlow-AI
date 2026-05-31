@@ -35,9 +35,15 @@ export interface EquityHistoryPoint {
 
 export interface SystemStatus {
   engine_running: boolean;
-  health: string;
-  account_metrics: AccountMetrics;
-  active_trade_count: number;
+  risk_status: {
+    starting_balance: number;
+    current_equity: number;
+    daily_drawdown: number;
+    total_drawdown: number;
+    is_breached: boolean;
+  };
+  active_trades_count: number;
+  market_regime: string;
 }
 
 export const apiService = {

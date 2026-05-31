@@ -25,7 +25,8 @@ def get_status():
     return {
         "engine_running": engine.running,
         "risk_status": engine.risk_manager.get_status(),
-        "active_trades_count": len(engine.get_active_trades())
+        "active_trades_count": len(engine.get_active_trades()),
+        "market_regime": engine.get_market_regime()
     }
 
 @app.get("/trades/active")
