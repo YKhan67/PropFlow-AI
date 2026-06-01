@@ -1,6 +1,11 @@
+"use client";
+
 import { Search, Bell, User } from "lucide-react";
+import { useDashboardData } from "@/hooks/useDashboardData";
 
 export function Header() {
+  const { status } = useDashboardData();
+
   return (
     <header className="flex h-16 items-center justify-between border-b border-white/10 bg-[#0a0a0a]/50 px-8 backdrop-blur-md">
       <div className="relative w-96">
@@ -21,7 +26,16 @@ export function Header() {
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500">
             <User className="h-4 w-4" />
           </div>
-          <span className="text-sm font-medium text-white">John Doe</span>
+          <div className="flex flex-col items-start">
+            <span className="text-sm font-medium text-white truncate max-w-[120px]">
+              {status?.account_name || "Guest"}
+            </span>
+            {status?.account_number && (
+              <span className="text-[10px] text-white/40 leading-none">
+                {status.account_number}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </header>

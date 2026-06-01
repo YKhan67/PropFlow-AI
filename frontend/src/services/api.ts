@@ -26,6 +26,7 @@ export interface MarketSymbol {
   ask: number;
   change: number;
   trend: "up" | "down";
+  regime?: string;
 }
 
 export interface EquityHistoryPoint {
@@ -33,23 +34,80 @@ export interface EquityHistoryPoint {
   equity: number;
 }
 
+export interface HistoricalTrade {
+  ticket: number;
+  symbol: string;
+  type: string;
+  volume: number;
+  profit: number;
+  time: number;
+  commission: number;
+  swap: number;
+  entry: number;
+}
+
 export interface SystemStatus {
   engine_running: boolean;
+  account_name: string;
+  account_number: number;
+  balance: number;
+  mt5_connected: boolean;
+  mt5_error: string;
   risk_status: {
     starting_balance: number;
     current_equity: number;
     daily_drawdown: number;
     total_drawdown: number;
+    max_daily_drawdown: number;
+    max_total_drawdown: number;
     is_breached: boolean;
   };
   active_trades_count: number;
   market_regime: string;
 }
 
+export interface RiskConfig {
+  max_daily_drawdown: number;
+  max_total_drawdown: number;
+  max_position_size: number;
+  account_balance: number;
+  scale_down_excess: boolean;
+  max_active_trades: number;
+  global_take_profit: number;
+  min_time_between_trades: number;
+}
+
+export interface AppConfig {
+  risk: RiskConfig;
+  symbols: string[];
+  timeframe?: string;
+  mt5?: {
+    login?: string;
+    password?: string;
+    server?: string;
+  };
+}
+
 export const apiService = {
   async getStatus(): Promise<SystemStatus> {
     const response = await fetch(`${API_BASE_URL}/status`, { cache: 'no-store' });
     if (!response.ok) throw new Error("Failed to fetch system status");
+    return response.json();
+  },
+
+  async getConfig(): Promise<AppConfig> {
+    const response = await fetch(`${API_BASE_URL}/config`, { cache: 'no-store' });
+    if (!response.ok) throw new Error("Failed to fetch config");
+    return response.json();
+  },
+
+  async updateConfig(config: Partial<AppConfig>): Promise<AppConfig> {
+    const response = await fetch(`${API_BASE_URL}/config`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    if (!response.ok) throw new Error("Failed to update config");
     return response.json();
   },
 
@@ -71,6 +129,12 @@ export const apiService = {
     return response.json();
   },
 
+  async getTradeHistory(days: number = 30): Promise<HistoricalTrade[]> {
+    const response = await fetch(`${API_BASE_URL}/account/trade-history?days=${days}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error("Failed to fetch trade history");
+    return response.json();
+  },
+
   async startEngine() {
     const response = await fetch(`${API_BASE_URL}/engine/start`, { method: "POST" });
     if (!response.ok) throw new Error("Failed to start engine");
@@ -80,6 +144,18 @@ export const apiService = {
   async stopEngine() {
     const response = await fetch(`${API_BASE_URL}/engine/stop`, { method: "POST" });
     if (!response.ok) throw new Error("Failed to stop engine");
+    return response.json();
+  },
+
+  async closeAllTrades() {
+    const response = await fetch(`${API_BASE_URL}/trades/close-all`, { method: "POST" });
+    if (!response.ok) throw new Error("Failed to close all trades");
+    return response.json();
+  },
+
+  async closeTrade(ticket: string | number) {
+    const response = await fetch(`${API_BASE_URL}/trades/close/${ticket}`, { method: "POST" });
+    if (!response.ok) throw new Error("Failed to close trade");
     return response.json();
   },
 };

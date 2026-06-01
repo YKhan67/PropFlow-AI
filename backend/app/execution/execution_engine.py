@@ -1,5 +1,7 @@
 import logging
 import time
+import datetime
+import threading
 import pandas as pd
 from app.broker.mt5_broker import MT5Bridge
 from app.services.risk_engine import RiskManager
@@ -12,157 +14,185 @@ except ImportError:
     logging.warning("AI module not found. Using dummy signals.")
 
 class ExecutionEngine:
-    def __init__(self, symbols, risk_config):
+    def __init__(self, symbols, risk_config, mt5_login=None, mt5_password=None, mt5_server=None, timeframe="H1"):
         self.symbols = symbols
-        self.bridge = MT5Bridge()
+        self.bridge = MT5Bridge(login=mt5_login, password=mt5_password, server=mt5_server)
         self.risk_manager = RiskManager(risk_config)
         self.running = False
         self.active_trades = []
         self.market_scanner = {}
         self.equity_history = []
-        
+        self.symbol_regimes = {}
+        self.account_cache = {}
+        self._current_symbol_idx = 0
+        self.timeframe_str = timeframe
+        self.data_lock = threading.Lock() # Added lock to fix the attribute error
+
+        # Mapping timeframe strings to MT5 constants
+        self.tf_map = {
+            "M1": 1, "M5": 5, "M15": 15, "M30": 30,
+            "H1": 16385, "H4": 16388, "D1": 16408
+        }
+        self.mt5_timeframe = self.tf_map.get(timeframe, 16385)
+
+        # Initialize bridge
+        self.bridge.initialize()
+
         if AI_AVAILABLE:
+            logging.info("AI Decision Engine successfully loaded.")
             self.ai_engine = HybridDecisionEngine()
-            # In a real scenario, we would load or train the model here
-            # self.ai_engine.load_regime_model("path/to/model")
-            # For now, we'll assume it's initialized but maybe not trained
-            # If not trained, evaluate() will raise RuntimeError
-            # So we might need a fallback.
-            self.ai_engine._trained = True # Mocking trained state for now
+            self.ai_engine._trained = False
+
+            # Sync initial settings
+            self.ai_engine.signal_gate.dd_config.min_time_between_trades_minutes = risk_config.get('min_time_between_trades', 5)
+            self.ai_engine.signal_gate.dd_config.daily_drawdown_limit_pct = risk_config.get('max_daily_drawdown', 0.05) * 100
+            self.ai_engine.signal_gate.dd_config.total_drawdown_limit_pct = risk_config.get('max_total_drawdown', 0.10) * 100
         else:
             self.ai_engine = None
 
-    def start(self):
-        logging.info("Starting Execution Engine...")
-        if not self.bridge.initialize():
-            logging.error("Failed to initialize MT5 Bridge.")
-            return
+        # Start the background data synchronizer (Dashboard & Risk)
+        # This thread handles all MT5 communication to keep the UI fast
+        self.sync_thread = threading.Thread(target=self._data_sync_loop, daemon=True)
+        self.sync_thread.start()
 
-        self.running = True
-        self.run_loop()
+    def _data_sync_loop(self):
+        """Sequential but efficient loop for MT5 data."""
+        logging.info("Background Sync Loop Started.")
+        while True:
+            try:
+                # 1. Update Market Prices (Fast)
+                ticker_data = {}
+                for symbol in self.symbols:
+                    ticker = self.bridge.get_symbol_info(symbol)
+                    if ticker:
+                        ticker_data[symbol] = ticker
+                self.market_scanner = ticker_data
 
-    def stop(self):
-        self.running = False
-        self.bridge.shutdown()
-        logging.info("Execution Engine stopped.")
+                # 2. Update Account & Trades (Fast)
+                self.active_trades = self.bridge.get_open_positions()
+                self.account_cache = self.bridge.get_account_info()
 
-    def run_loop(self):
-        while self.running:
-            # Update Equity and Risk Manager
-            current_pnl = self.calculate_total_pnl()
-            new_equity = self.risk_manager.starting_balance + current_pnl
-            self.risk_manager.update_equity(new_equity)
-            self.equity_history.append({
-                "time": time.time(),
-                "equity": new_equity
-            })
-            if len(self.equity_history) > 100:
-                self.equity_history.pop(0)
+                # 3. Update History & Risk
+                current_pnl = sum(p.get('profit', 0) for p in self.active_trades)
+                new_equity = self.account_cache.get("equity", self.risk_manager.starting_balance)
+                self.risk_manager.update_equity(new_equity)
 
-            for symbol in self.symbols:
-                # 1. Update Market Scanner Data
-                ticker = self.bridge.get_symbol_info(symbol)
-                if ticker:
-                    self.market_scanner[symbol] = ticker
+                self.equity_history.append({"time": time.time(), "equity": new_equity})
+                if len(self.equity_history) > 100:
+                    self.equity_history.pop(0)
 
-                # 2. Fetch Market Data for Strategy
-                data = self.bridge.get_market_data(symbol, 1) # 1H timeframe for example
-                if data is not None:
-                    # 3. Strategy Logic
-                    if AI_AVAILABLE and self.ai_engine:
-                        try:
-                            df = pd.DataFrame.from_records(data)
-                            decision = self.ai_engine.evaluate(df)
-                            if decision.is_actionable:
-                                signal = {
-                                    'symbol': symbol,
-                                    'type': 0 if decision.signal in [SignalType.LONG, SignalType.REDUCED_LONG] else 1,
-                                    'volume': max(0.01, round(0.1 * decision.risk_multiplier, 2))
-                                }
-                            else:
-                                signal = None
-                        except Exception as e:
-                            logging.error(f"AI Engine evaluation failed: {e}")
-                            signal = self.generate_dummy_signal(symbol)
+                # 4. Strategy Evaluation (One symbol per loop to prevent lag)
+                if self.running and self.symbols:
+                    target_symbol = self.symbols[self._current_symbol_idx]
+                    self._evaluate_symbol_strategy(target_symbol)
+
+                    # Move to next symbol for next loop
+                    self._current_symbol_idx = (self._current_symbol_idx + 1) % len(self.symbols)
+
+                # 5. Check Basket Exit
+                if self.running:
+                    target_profit = self.risk_manager.config.get('global_take_profit', 0)
+                    if target_profit > 0 and current_pnl >= target_profit:
+                        logging.info(f"Global Profit Target Reached (${current_pnl:.2f}).")
+                        self.close_all_trades()
+
+            except Exception as e:
+                logging.error(f"Sync Loop Error: {e}")
+
+            time.sleep(1) # High-speed refresh for dashboard
+
+    def _evaluate_symbol_strategy(self, symbol):
+        """Slow AI logic handled for a single symbol."""
+        data = self.bridge.get_market_data(symbol, timeframe=self.mt5_timeframe, count=250)
+        if data is not None and len(data) > 0:
+            logging.info(f"[{symbol}] Data retrieved ({len(data)} bars). Evaluating AI...")
+            if AI_AVAILABLE and self.ai_engine:
+                try:
+                    df = pd.DataFrame.from_records(data)
+                    if not self.ai_engine._trained:
+                        logging.info(f"[{symbol}] Initializing AI model...")
+                        self.ai_engine.train_regime_model(df)
+
+                    decision = self.ai_engine.evaluate(df, symbol=symbol, timeframe=self.timeframe_str)
+                    with self.data_lock:
+                        self.symbol_regimes[symbol] = decision.regime
+
+                    # Detailed Decision Log
+                    if decision.signal == SignalType.HOLD:
+                        logging.info(f"[{symbol}] AI: HOLD (Regime: {decision.regime}, Filter: {decision.filter_decision}, Reason: {decision.filter_reason})")
                     else:
-                        signal = self.generate_dummy_signal(symbol)
-                    
-                    if signal:
-                        # 4. Risk Check
-                        status, validated_signal = self.risk_manager.check_order(signal)
+                        logging.info(f"[{symbol}] AI Signal: {decision.signal} (Regime: {decision.regime})")
+
+                    if decision.is_actionable:
+                        max_pos = self.risk_manager.config.get('max_position_size', 0.1)
+                        signal = {
+                            'symbol': symbol,
+                            'type': 0 if decision.signal in [SignalType.LONG, SignalType.REDUCED_LONG] else 1,
+                            'volume': float(max_pos)
+                        }
+                        status, validated_signal = self.risk_manager.check_order(
+                            signal, active_trades_count=len(self.active_trades)
+                        )
                         if status in ['approved', 'modified']:
-                            # 5. Execute
-                            result = self.bridge.place_order(
+                            self.bridge.place_order(
                                 symbol=validated_signal['symbol'],
                                 order_type=validated_signal['type'],
                                 volume=validated_signal['volume']
                             )
-                            logging.info(f"Order Execution Result: {result}")
-                            if result.get('retcode') == 10009:
-                                self.active_trades.append({
-                                    "symbol": validated_signal['symbol'],
-                                    "type": "BUY" if validated_signal['type'] == 0 else "SELL",
-                                    "volume": validated_signal['volume'],
-                                    "open_price": ticker['last'] if ticker else 1.05,
-                                    "time": time.time()
-                                })
-                        else:
-                            logging.warning(f"Order blocked by Risk Manager: {signal}")
+                except Exception as e:
+                    logging.error(f"AI Strategy Error [{symbol}]: {e}")
 
-            time.sleep(5) # Run every 5 seconds
+    def start(self):
+        logging.info("Trading Engine Activated.")
+        self.running = True
+
+    def stop(self):
+        self.running = False
+        logging.info("Trading Engine Deactivated.")
+
+    def set_timeframe(self, tf_str):
+        self.timeframe_str = tf_str
+        self.mt5_timeframe = self.tf_map.get(tf_str, 16385)
+        # Force re-training on new timeframe
+        if self.ai_engine:
+            self.ai_engine._trained = False
+        logging.info(f"Engine timeframe updated to {tf_str}")
+
+    def get_account_info(self):
+        # Return cached data so API calls are instant
+        return self.account_cache if self.account_cache else self.bridge.get_account_info()
+
+    def close_all_trades(self):
+        logging.info("Closing all active trades...")
+        for pos in self.active_trades:
+            self.bridge.close_position(pos['id'])
+        return True
 
     def calculate_total_pnl(self):
-        total_pnl = 0
-        for trade in self.active_trades:
-            ticker = self.market_scanner.get(trade['symbol'])
-            if ticker:
-                current_price = ticker['last']
-                if trade['type'] == "BUY":
-                    # Simple PnL calculation (price diff * volume * contract size multiplier)
-                    # For EURUSD, 1 lot is 100,000 units. 1 pip is 0.0001.
-                    # Simplified mock calculation:
-                    total_pnl += (current_price - trade['open_price']) * trade['volume'] * 100000
-                else:
-                    total_pnl += (trade['open_price'] - current_price) * trade['volume'] * 100000
-        return total_pnl
+        # Calculate NET floating profit (Profit + Commission + Swap)
+        return sum(trade.get('profit', 0) + trade.get('commission', 0) + trade.get('swap', 0) for trade in self.active_trades)
 
     def get_active_trades(self):
-        # Update current price and PnL for each active trade before returning
-        trades_with_pnl = []
-        for trade in self.active_trades:
-            ticker = self.market_scanner.get(trade['symbol'])
-            current_price = ticker['last'] if ticker else trade['open_price']
-            pnl = 0
-            if ticker:
-                if trade['type'] == "BUY":
-                    pnl = (current_price - trade['open_price']) * trade['volume'] * 100000
-                else:
-                    pnl = (trade['open_price'] - current_price) * trade['volume'] * 100000
-            
-            trade_copy = trade.copy()
-            trade_copy['current_price'] = current_price
-            trade_copy['pnl'] = pnl
-            trades_with_pnl.append(trade_copy)
-        return trades_with_pnl
+        return self.active_trades
 
     def get_market_scanner(self):
-        return list(self.market_scanner.values())
+        enriched = []
+        for symbol, data in self.market_scanner.items():
+            enriched.append({
+                "symbol": symbol,
+                "bid": data['bid'],
+                "ask": data['ask'],
+                "change": data.get('change', 0.0),
+                "trend": data.get('trend', "neutral"),
+                "regime": self.symbol_regimes.get(symbol, "analyzing...")
+            })
+        return enriched
 
     def get_equity_history(self):
-        return self.equity_history
+        return [{"timestamp": p['time'] * 1000, "equity": p['equity']} for p in self.equity_history]
 
     def get_market_regime(self):
-        if AI_AVAILABLE and self.ai_engine:
-            return self.ai_engine._last_regime
-        return "unknown"
+        return ""
 
     def generate_dummy_signal(self, symbol):
-        # Placeholder signal generation
-        import random
-        if random.random() > 0.95:
-            return {
-                'symbol': symbol,
-                'type': 0, # Buy
-                'volume': 0.1
-            }
         return None

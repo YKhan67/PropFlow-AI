@@ -11,6 +11,8 @@ interface Trade {
 
 interface ActiveTradesProps {
   data?: Trade[];
+  onCloseTrade?: (id: string | number) => void;
+  totalProfit?: number;
 }
 
 const defaultTrades: Trade[] = [
@@ -19,11 +21,22 @@ const defaultTrades: Trade[] = [
   { id: 3, pair: "GBPUSD", type: "BUY", lots: 2.0, profit: "+$340.00", status: "Running" },
 ];
 
-export function ActiveTrades({ data = defaultTrades }: ActiveTradesProps) {
+export function ActiveTrades({ data = defaultTrades, onCloseTrade, totalProfit }: ActiveTradesProps) {
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white">Active Trades</h3>
+        <div className="flex items-center gap-3">
+          <h3 className="text-lg font-semibold text-white">Active Trades</h3>
+          {totalProfit !== undefined && (
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ring-1 ring-inset ${
+              totalProfit >= 0
+                ? "bg-emerald-500/10 text-emerald-400 ring-emerald-500/20"
+                : "bg-rose-500/10 text-rose-400 ring-rose-500/20"
+            }`}>
+              {totalProfit >= 0 ? "+" : ""}{totalProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          )}
+        </div>
         <button className="text-white/40 hover:text-white">
           <MoreHorizontal className="h-5 w-5" />
         </button>
@@ -51,7 +64,10 @@ export function ActiveTrades({ data = defaultTrades }: ActiveTradesProps) {
                   {typeof trade.profit === 'number' ? `${trade.profit.toFixed(2)}` : trade.profit}
                 </td>
                 <td className="py-3 text-right">
-                  <button className="rounded bg-white/5 px-2 py-1 text-xs text-white/60 hover:bg-white/10">
+                  <button
+                    onClick={() => onCloseTrade?.(trade.id)}
+                    className="rounded bg-rose-500/10 px-2 py-1 text-xs text-rose-400 hover:bg-rose-500/20 transition-colors"
+                  >
                     Close
                   </button>
                 </td>

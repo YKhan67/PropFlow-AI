@@ -56,7 +56,7 @@ class EngineDecision:
     def is_actionable(self) -> bool:
         return (
             self.passed_all_filters
-            and self.confidence > 0.3
+            and self.confidence > 0.1 # Lowered from 0.3
             and self.signal not in (SignalType.HOLD, SignalType.EXIT)
         )
 
@@ -75,34 +75,51 @@ class RegimeParams:
     use_wider_stops: bool = False
 
     @classmethod
-    def for_regime(cls, regime: str) -> "RegimeParams":
-        """Return appropriate params for the detected market regime."""
+    def for_regime(cls, regime: str, symbol: str = "", timeframe: str = "H1") -> "RegimeParams":
+        """Return appropriate params for the detected market regime, adjusted for asset class and timeframe."""
+        # 1. Base Thresholds
+        params = cls()
+
         if regime == "trending":
-            return cls(
-                trend_threshold=0.3,      # Lower threshold → more signals
-                max_risk_per_trade_pct=1.5,  # Higher risk appetite
-                confidence_threshold=0.4,
-                max_position_size_pct=2.0,
-                use_wider_stops=False,
-            )
+            params.trend_threshold = 0.1
+            params.confidence_threshold = 0.2
         elif regime == "ranging":
-            return cls(
-                trend_threshold=0.5,      # Higher threshold → fewer signals
-                max_risk_per_trade_pct=0.75,  # Lower risk
-                confidence_threshold=0.6,  # Higher confidence needed
-                max_position_size_pct=1.0,
-                use_wider_stops=False,
-            )
+            params.trend_threshold = 0.5
+            params.confidence_threshold = 0.6
         elif regime == "volatile":
-            return cls(
-                trend_threshold=0.7,      # Very high threshold
-                max_risk_per_trade_pct=0.5,   # Minimal risk
-                confidence_threshold=0.7,  # Strong conviction only
-                max_position_size_pct=0.5,    # Tiny positions
-                use_wider_stops=True,      # Wider stops to avoid noise
-            )
+            params.trend_threshold = 0.7
+            params.confidence_threshold = 0.7
+        else: # analyzesing or unknown
+            params.trend_threshold = 0.3
+            params.confidence_threshold = 0.4
+
+        # 2. Timeframe-Specific Relaxation
+        # Lower timeframes (M1-M30) have smaller price moves per bar.
+        # We relax the thresholds proportionally so the AI can actually trigger.
+        tf_multipliers = {
+            "M1": 0.05,    # Ultra relaxed
+            "M5": 0.15,
+            "M15": 0.25,
+            "M30": 0.4,   # Relaxed by 60%
+            "H1": 1.0,    # Baseline
+            "H4": 2.0,    # Stricter (needs larger moves)
+            "D1": 4.0     # Very strict
+        }
+        multiplier = tf_multipliers.get(timeframe.upper(), 1.0)
+        params.trend_threshold *= multiplier
+
+        # 3. Asset-Specific Multipliers
+        # Metals move much more in % than FX. Scale up their thresholds to avoid 'volatile' noise.
+        is_metal = any(m in symbol.upper() for m in ["XAU", "XAG", "GOLD", "SILVER"])
+
+        if is_metal:
+            # Gold/Silver need ~4x higher thresholds to consider a trend 'strong'
+            params.trend_threshold *= 4.0
         else:
-            return cls()  # Default conservative
+            # FX pairs are very quiet; use sensitive thresholds (already multiplied by tf)
+            params.trend_threshold *= 0.5
+
+        return params
 
 
 class HybridDecisionEngine:
@@ -202,33 +219,39 @@ class HybridDecisionEngine:
         if regime == "trending":
             # Trend-following: stronger weight on longer momentum
             if roc20 > regime_params.trend_threshold and latest_close > sma20:
-                confidence = min(1.0, abs(roc20) / 5.0)
+                confidence = min(1.0, abs(roc20) / 1.0)
                 return SignalType.LONG, confidence
             elif roc20 < -regime_params.trend_threshold and latest_close < sma20:
-                confidence = min(1.0, abs(roc20) / 5.0)
+                confidence = min(1.0, abs(roc20) / 1.0)
                 return SignalType.SHORT, confidence
+            else:
+                # Debug log for why trending failed
+                # print(f"DEBUG [{regime}]: ROC20={roc20:.4f}, Threshold={regime_params.trend_threshold:.4f}, Close={latest_close:.5f}, SMA20={sma20:.5f}")
+                pass
 
         elif regime == "ranging":
             # Mean-reversion: buy low, sell high within range
-            bb_high = np.mean(close[-20:]) + 2 * np.std(close[-20:], ddof=1)
-            bb_low = np.mean(close[-20:]) - 2 * np.std(close[-20:], ddof=1)
+            sma = np.mean(close[-20:])
+            std = np.std(close[-20:], ddof=1)
+            bb_high = sma + 1.5 * std
+            bb_low = sma - 1.5 * std
 
-            if latest_close <= bb_low and roc5 > 0:
-                confidence = min(1.0, (bb_low - latest_close) / (bb_high - bb_low + 1e-10))
+            if latest_close <= bb_low:
+                confidence = 0.5
                 return SignalType.LONG, confidence
-            elif latest_close >= bb_high and roc5 < 0:
-                confidence = min(1.0, (latest_close - bb_high) / (bb_high - bb_low + 1e-10))
+            elif latest_close >= bb_high:
+                confidence = 0.5
                 return SignalType.SHORT, confidence
+            else:
+                # print(f"DEBUG [{regime}]: Close={latest_close:.5f}, BB_Low={bb_low:.5f}, BB_High={bb_high:.5f}")
+                pass
 
         elif regime == "volatile":
             # Highly volatile: only trade if very strong signal, else HOLD
             # Look for breakout with confirmation
-            if roc5 > regime_params.trend_threshold * 3 and adx_val > 25:
-                confidence = min(0.6, abs(roc5) / 10.0)  # Cap confidence
-                return SignalType.REDUCED_LONG, confidence
-            elif roc5 < -regime_params.trend_threshold * 3 and adx_val > 25:
-                confidence = min(0.6, abs(roc5) / 10.0)
-                return SignalType.REDUCED_SHORT, confidence
+            if abs(roc5) > regime_params.trend_threshold * 2: # Lowered from 3
+                confidence = min(0.6, abs(roc5) / 5.0)  # Lowered denominator
+                return SignalType.REDUCED_LONG if roc5 > 0 else SignalType.REDUCED_SHORT, confidence
             else:
                 return SignalType.HOLD, 0.0
 
@@ -238,6 +261,8 @@ class HybridDecisionEngine:
     def evaluate(
         self,
         ohlcv: pd.DataFrame,
+        symbol: str = "",
+        timeframe: str = "H1",
         bar_index: int = -1,
         is_friday: bool = False,
         is_monday: bool = False,
@@ -253,6 +278,8 @@ class HybridDecisionEngine:
 
         Args:
             ohlcv: Full OHLCV DataFrame (needs at least FeatureConfig.max_lookback bars)
+            symbol: Trading pair name
+            timeframe: Current evaluation timeframe (e.g., M30, H1)
             bar_index: Index of current bar (-1 = last)
             is_friday: Whether current bar is Friday
             is_monday: Whether current bar is Monday
@@ -273,8 +300,8 @@ class HybridDecisionEngine:
         self._last_regime = current_regime
         self._regime_history.append(current_regime)
 
-        # 2. Regime-adaptive parameters
-        regime_params = RegimeParams.for_regime(current_regime)
+        # 2. Regime-adaptive parameters (Now adjusted for timeframe)
+        regime_params = RegimeParams.for_regime(current_regime, symbol, timeframe)
 
         # 3. Feature matrix for signal logic
         feature_matrix, feature_names = extract_features(ohlcv, self.feature_config)
@@ -308,6 +335,7 @@ class HybridDecisionEngine:
             ohlcv_row=current_row,
             prev_close=prev_close,
             bar_index=bar_index if bar_index >= 0 else len(ohlcv) - 1,
+            symbol=symbol,
             is_friday=is_friday,
             is_monday=is_monday,
             atr_value=current_atr,
@@ -316,35 +344,21 @@ class HybridDecisionEngine:
 
         passed = filter_decision == FilterDecision.PASS
 
-        # 6. Compute risk multiplier
+        # 6. Compute risk multiplier - Fixed to use 1.0 to respect user settings
         risk_multiplier = 1.0
 
-        if filter_decision == FilterDecision.REDUCE or filter_decision == FilterDecision.DELAY:
-            risk_multiplier = 0.5
-        elif filter_decision == FilterDecision.BLOCK:
-            risk_multiplier = 0.0
-
-        # Apply regime-based risk adjustment
-        risk_multiplier *= min(1.0, regime_params.max_risk_per_trade_pct / 2.0)
-
-        # Apply confidence scaling
-        risk_multiplier *= confidence
-
         # Build final decision
-        if not passed and filter_decision == FilterDecision.BLOCK:
+        if not passed:
             final_signal = SignalType.HOLD
-        elif not passed and filter_decision == FilterDecision.DELAY:
-            final_signal = SignalType.HOLD
-        elif not passed and filter_decision == FilterDecision.REDUCE:
-            # Keep signal but reduce size
-            if signal == SignalType.LONG:
-                final_signal = SignalType.REDUCED_LONG
-            elif signal == SignalType.SHORT:
-                final_signal = SignalType.REDUCED_SHORT
-            else:
-                final_signal = signal
+            # Log why it was blocked if a strategy signal was present
+            if signal != SignalType.HOLD:
+                print(f"!!! SIGNAL BLOCKED: {symbol} {signal} (Reason: {filter_reason}) !!!")
         else:
             final_signal = signal
+
+        # Force decision log to terminal for better visibility
+        if final_signal != SignalType.HOLD:
+            print(f"!!! SIGNAL GENERATED: {symbol} {final_signal} (Confidence: {confidence:.2f}) !!!")
 
         decision = EngineDecision(
             signal=final_signal,
@@ -358,10 +372,10 @@ class HybridDecisionEngine:
 
         # Update state
         if passed:
-            self.signal_gate.count_signal()
+            self.signal_gate.count_signal(symbol)
         else:
             bar_idx = bar_index if bar_index >= 0 else len(ohlcv) - 1
-            self.signal_gate.register_block(bar_idx)
+            self.signal_gate.register_block(bar_idx, symbol)
 
         self._decision_history.append(decision)
 

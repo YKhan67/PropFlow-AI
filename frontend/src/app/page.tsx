@@ -6,7 +6,7 @@ import { StatsCard } from "@/components/dashboard/StatsCard";
 import { EquityChart } from "@/components/charts/EquityChart";
 import { MarketScanner } from "@/components/dashboard/MarketScanner";
 import { ActiveTrades } from "@/components/dashboard/ActiveTrades";
-import { Wallet, TrendingUp, AlertCircle, Activity, Play, Square } from "lucide-react";
+import { Wallet, TrendingUp, AlertCircle, Activity, Play, Square, XCircle } from "lucide-react";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { apiService } from "@/services/api";
 import { useState } from "react";
@@ -33,12 +33,39 @@ export default function Dashboard() {
     }
   };
 
+  const handleCloseAll = async () => {
+    if (!confirm("Are you sure you want to close ALL active trades?")) return;
+    setActionLoading(true);
+    try {
+      await apiService.closeAllTrades();
+      await refetch();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to close trades");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCloseTrade = async (id: string | number) => {
+    setActionLoading(true);
+    try {
+      await apiService.closeTrade(id);
+      await refetch();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to close trade");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const accountMetrics = status?.account_metrics;
 
   // Format history for EquityChart
   const chartData = history.length > 0 
     ? history.map(p => ({
-        time: new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        time: new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         equity: p.equity
       }))
     : undefined;
@@ -55,10 +82,19 @@ export default function Dashboard() {
             <div>
               <h1 className="text-2xl font-bold">Trading Overview</h1>
               <p className="text-white/60 text-sm">
-                {loading ? "Loading system status..." : error ? `Error: ${error}` : status?.engine_running ? `System Active - Regime: ${status.market_regime}` : "System is idle."}
+                {loading ? "Loading system status..." : error ? `Error: ${error}` : status?.engine_running ? `System Active` : "System is idle."}
               </p>
             </div>
             <div className="flex items-center gap-4">
+              {trades.length > 0 && (
+                <button
+                  onClick={handleCloseAll}
+                  disabled={actionLoading || loading}
+                  className="flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rose-600 disabled:opacity-50"
+                >
+                  <XCircle className="h-4 w-4" /> Close All Trades
+                </button>
+              )}
               <button
                 onClick={handleToggleEngine}
                 disabled={actionLoading || loading}
@@ -83,34 +119,41 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-5">
             <StatsCard
               title="Account Equity"
-              value={status?.risk_status ? `${status.risk_status.current_equity.toLocaleString()}` : "$0.00"}
+              value={status?.risk_status?.current_equity !== undefined ? `$${status.risk_status.current_equity.toLocaleString(undefined, {minimumFractionDigits: 2})}` : "$0.00"}
               change={status?.risk_status ? `${((status.risk_status.current_equity - status.risk_status.starting_balance) / status.risk_status.starting_balance * 100).toFixed(2)}%` : undefined}
               trend={status?.risk_status && status.risk_status.current_equity >= status.risk_status.starting_balance ? "up" : "down"}
+              icon={Activity}
+              description="Floating account value"
+            />
+            <StatsCard
+              title="Account Balance"
+              value={status?.balance !== undefined ? `$${status.balance.toLocaleString(undefined, {minimumFractionDigits: 2})}` : "$0.00"}
               icon={Wallet}
-              description="Total account value"
+              description="Settled account balance"
+              trend="neutral"
             />
             <StatsCard
               title="Daily Drawdown"
-              value={status?.risk_status ? `${status.risk_status.daily_drawdown.toFixed(2)}%` : "0.00%"}
-              trend={status?.risk_status && status.risk_status.daily_drawdown < 5 ? "up" : "down"}
+              value={status?.risk_status?.daily_drawdown !== undefined ? `${status.risk_status.daily_drawdown.toFixed(2)}%` : "0.00%"}
+              change={status?.risk_status ? `Limit: ${status.risk_status.max_daily_drawdown.toFixed(1)}%` : undefined}
+              trend={status?.risk_status && status.risk_status.daily_drawdown < status.risk_status.max_daily_drawdown ? "up" : "down"}
               icon={TrendingUp}
               description="Current session drawdown"
             />
             <StatsCard
               title="Total Drawdown"
-              value={status?.risk_status ? `${status.risk_status.total_drawdown.toFixed(2)}%` : "0.00%"}
-              change="Limit: 10%"
+              value={status?.risk_status?.total_drawdown !== undefined ? `${status.risk_status.total_drawdown.toFixed(2)}%` : "0.00%"}
+              change={status?.risk_status ? `Limit: ${status.risk_status.max_total_drawdown.toFixed(1)}%` : undefined}
               trend="neutral"
               icon={AlertCircle}
               description="Against starting balance"
             />
             <StatsCard
               title="Active Trades"
-              value={status?.active_trades_count.toString() || "0"}
-              change={status?.market_regime ? `Regime: ${status.market_regime}` : undefined}
+              value={status?.active_trades_count?.toString() || "0"}
               trend="up"
               icon={Activity}
               description="Current positions"
@@ -128,6 +171,8 @@ export default function Dashboard() {
                   lots: t.volume,
                   profit: t.profit
                 }))}
+                onCloseTrade={handleCloseTrade}
+                totalProfit={trades.reduce((sum, t) => sum + (typeof t.profit === 'number' ? t.profit : 0), 0)}
               />
             </div>
             <div className="space-y-8">
@@ -136,7 +181,8 @@ export default function Dashboard() {
                   symbol: m.symbol,
                   price: m.bid, // Using bid as display price
                   change: `${m.change >= 0 ? '+' : ''}${m.change.toFixed(2)}%`,
-                  trend: m.trend
+                  trend: m.trend,
+                  regime: m.regime
                 }))}
               />
               <div className="rounded-xl border border-white/10 bg-gradient-to-br from-emerald-500/20 to-blue-500/20 p-6">

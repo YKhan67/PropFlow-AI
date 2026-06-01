@@ -3,7 +3,8 @@ import sys
 import os
 import uvicorn
 
-# Add backend directory to sys.path to allow imports from 'app'
+# Add backend and root directories to sys.path
+sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__), "backend"))
 
 # Configure logging

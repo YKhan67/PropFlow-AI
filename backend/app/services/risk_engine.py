@@ -54,14 +54,17 @@ class RiskManager:
     def current_daily_drawdown(self):
         return (self.hwm_daily - self.current_equity) / self.hwm_daily
 
-    def check_order(self, order_request):
+    def check_order(self, order_request, active_trades_count=0):
         """
         The final gate for all orders.
-        Returns: (status, validated_order)
-        status: 'approved', 'modified', or 'rejected'
-        validated_order: the order dict (possibly modified) or None
         """
-        # 1. Drawdown Checks (Immediate rejection)
+        # 1. Max Active Trades Check
+        max_trades = self.config.get('max_active_trades', 5)
+        if active_trades_count >= max_trades:
+            logging.warning(f"Risk Reject: Max active trades limit reached ({max_trades})")
+            return 'rejected', None
+
+        # 2. Drawdown Checks
         max_daily_dd = self.config.get('max_daily_drawdown', 0.05)
         if self.current_daily_drawdown >= max_daily_dd:
             logging.error(f"Risk Reject: Daily drawdown limit reached ({self.current_daily_drawdown:.2%})")

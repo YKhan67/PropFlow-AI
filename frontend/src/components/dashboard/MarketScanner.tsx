@@ -5,6 +5,7 @@ interface MarketData {
   price: string | number;
   change: string;
   trend: "up" | "down";
+  regime?: string;
 }
 
 interface MarketScannerProps {
@@ -12,11 +13,8 @@ interface MarketScannerProps {
 }
 
 const defaultMarkets: MarketData[] = [
-  { symbol: "EURUSD", price: "1.08452", change: "+0.12%", trend: "up" },
-  { symbol: "GBPUSD", price: "1.26781", change: "-0.05%", trend: "down" },
-  { symbol: "USDJPY", price: "150.234", change: "+0.45%", trend: "up" },
-  { symbol: "AUDUSD", price: "0.65432", change: "-0.21%", trend: "down" },
-  { symbol: "XAUUSD", price: "2034.12", change: "+0.89%", trend: "up" },
+  { symbol: "EURUSD", price: "1.08452", change: "+0.12%", trend: "up", regime: "ranging" },
+  { symbol: "GBPUSD", price: "1.26781", change: "-0.05%", trend: "down", regime: "trending" },
 ];
 
 export function MarketScanner({ data = defaultMarkets }: MarketScannerProps) {
@@ -29,8 +27,15 @@ export function MarketScanner({ data = defaultMarkets }: MarketScannerProps) {
             key={m.symbol}
             className="flex items-center justify-between border-b border-white/5 pb-2 last:border-0"
           >
-            <div>
-              <p className="font-bold text-white">{m.symbol}</p>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <p className="font-bold text-white">{m.symbol}</p>
+                {m.regime && (
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5 text-white/40 border border-white/10">
+                    {m.regime}
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-white/40">{m.price}</p>
             </div>
             <div
