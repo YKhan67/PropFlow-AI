@@ -31,9 +31,15 @@ def load_settings():
             'scale_down_excess': True,
             'max_active_trades': 5,
             'global_take_profit': 0.0,
-            'min_time_between_trades': 5
+            'min_time_between_trades': 5,
+            'active_strategy': "hybrid_hmm",
+            'quant_zscore_entry': 2.0,
+            'quant_zscore_exit': 0.5,
+            'correlation_threshold': 0.8
         },
         'symbols': ["EURUSD", "GBPUSD"],
+        'symbols_quant': ["EURUSD", "GBPUSD", "USDJPY"],
+        'symbols_corr': ["EURUSD", "GBPUSD", "USDCHF", "USDJPY", "AUDUSD", "NZDUSD", "USDCAD"],
         'timeframe': "H1"
     }
 
@@ -44,8 +50,18 @@ def save_settings(data):
 # Initial load
 config_data = load_settings()
 mt5_conf = config_data.get('mt5', {})
+active_strategy = config_data['risk'].get('active_strategy', 'hybrid_hmm')
+
+# Select correct symbols based on saved strategy
+if active_strategy == 'hybrid_hmm':
+    initial_symbols = config_data.get('symbols', [])
+elif active_strategy == 'quant_engine':
+    initial_symbols = config_data.get('symbols_quant', [])
+else:
+    initial_symbols = config_data.get('symbols_corr', [])
+
 engine = ExecutionEngine(
-    config_data['symbols'],
+    initial_symbols,
     config_data['risk'],
     mt5_login=mt5_conf.get('login'),
     mt5_password=mt5_conf.get('password'),
@@ -69,14 +85,35 @@ def update_config(new_config: dict):
         engine.risk_manager.config.update(config_data['risk'])
         engine.risk_manager.starting_balance = config_data['risk'].get('account_balance', 100000.0)
 
-        # Update AI Engine Signal Gate if it exists
-        if engine.ai_engine:
-            engine.ai_engine.signal_gate.dd_config.min_time_between_trades_minutes = config_data['risk'].get('min_time_between_trades', 5)
-            engine.ai_engine.signal_gate.dd_config.daily_drawdown_limit_pct = config_data['risk'].get('max_daily_drawdown', 0.05) * 100
-            engine.ai_engine.signal_gate.dd_config.total_drawdown_limit_pct = config_data['risk'].get('max_total_drawdown', 0.10) * 100
+        # Update AI Engines if they exist
+        if engine.ai_hmm:
+            engine.ai_hmm.signal_gate.dd_config.min_time_between_trades_minutes = config_data['risk'].get('min_time_between_trades', 5)
+            engine.ai_hmm.signal_gate.dd_config.daily_drawdown_limit_pct = config_data['risk'].get('max_daily_drawdown', 0.05) * 100
+            engine.ai_hmm.signal_gate.dd_config.total_drawdown_limit_pct = config_data['risk'].get('max_total_drawdown', 0.10) * 100
+        if engine.ai_quant:
+            engine.ai_quant.z_entry = config_data['risk'].get('quant_zscore_entry', 2.0)
+            engine.ai_quant.z_exit = config_data['risk'].get('quant_zscore_exit', 0.5)
+
+        # Switch engine active symbols based on strategy change
+        if config_data['risk'].get('active_strategy') == 'hybrid_hmm':
+            engine.symbols = config_data['symbols']
+        elif config_data['risk'].get('active_strategy') == 'quant_engine':
+            engine.symbols = config_data.get('symbols_quant', [])
+        else:
+            engine.symbols = config_data.get('symbols_corr', [])
     if 'symbols' in new_config:
         config_data['symbols'] = new_config['symbols']
-        engine.symbols = config_data['symbols']
+        # engine.symbols is used as the active trading list
+        if config_data['risk'].get('active_strategy') == 'hybrid_hmm':
+            engine.symbols = config_data['symbols']
+    if 'symbols_quant' in new_config:
+        config_data['symbols_quant'] = new_config['symbols_quant']
+        if config_data['risk'].get('active_strategy') == 'quant_engine':
+            engine.symbols = config_data['symbols_quant']
+    if 'symbols_corr' in new_config:
+        config_data['symbols_corr'] = new_config['symbols_corr']
+        if config_data['risk'].get('active_strategy') == 'correlation_reversion':
+            engine.symbols = config_data['symbols_corr']
     if 'timeframe' in new_config:
         config_data['timeframe'] = new_config['timeframe']
         engine.set_timeframe(config_data['timeframe'])
@@ -113,7 +150,8 @@ def get_status():
                 "is_breached": risk["total_drawdown"] >= config_data['risk']['max_total_drawdown']
             },
             "active_trades_count": len(engine.get_active_trades()),
-            "market_regime": engine.get_market_regime()
+            "market_regime": engine.get_market_regime(),
+            "active_strategy": config_data['risk'].get('active_strategy', 'hybrid_hmm')
         }
     except Exception as e:
         logging.error(f"Status error: {e}")

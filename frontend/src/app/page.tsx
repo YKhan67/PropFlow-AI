@@ -82,7 +82,11 @@ export default function Dashboard() {
             <div>
               <h1 className="text-2xl font-bold">Trading Overview</h1>
               <p className="text-white/60 text-sm">
-                {loading ? "Loading system status..." : error ? `Error: ${error}` : status?.engine_running ? `System Active` : "System is idle."}
+                {loading ? "Loading system status..." : error ? `Error: ${error}` : status?.engine_running ? `System Active [${
+                  status.active_strategy === 'hybrid_hmm' ? 'Hybrid AI' :
+                  status.active_strategy === 'quant_engine' ? 'FX-QUANT' :
+                  'Correlation'
+                }]` : "System is idle."}
               </p>
             </div>
             <div className="flex items-center gap-4">
@@ -182,7 +186,8 @@ export default function Dashboard() {
                   price: m.bid, // Using bid as display price
                   change: `${m.change >= 0 ? '+' : ''}${m.change.toFixed(2)}%`,
                   trend: m.trend,
-                  regime: m.regime
+                  regime: m.regime,
+                  pnl: m.pnl
                 }))}
               />
               <div className="rounded-xl border border-white/10 bg-gradient-to-br from-emerald-500/20 to-blue-500/20 p-6">

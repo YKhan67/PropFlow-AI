@@ -62,6 +62,32 @@ export default function RiskPage() {
           </div>
 
           <form onSubmit={handleSave} className="space-y-6">
+            {/* Strategy Selection */}
+            <div className="rounded-xl border border-white/10 bg-white/5 p-6 border-emerald-500/30 bg-emerald-500/5">
+              <div className="flex items-center gap-2 mb-4 text-emerald-400">
+                <Shield className="h-5 w-5" />
+                <h2 className="font-semibold">Active Trading Strategy</h2>
+              </div>
+              <div>
+                <select
+                  value={config?.active_strategy || "hybrid_hmm"}
+                  onChange={(e) => updateField("active_strategy", e.target.value as any)}
+                  className="w-full bg-black border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="hybrid_hmm">Strategy 1: Hybrid AI (Momentum + HMM)</option>
+                  <option value="quant_engine">Strategy 2: FX-QUANT-ENGINE (Stat-Arb & Synthetic)</option>
+                  <option value="correlation_reversion">Strategy 3: Correlation Reversion (Pair Basket)</option>
+                </select>
+                <p className="text-xs text-white/40 mt-2">
+                  {config?.active_strategy === "hybrid_hmm"
+                    ? "Uses HMM for regime detection and technical indicators for momentum entry."
+                    : config?.active_strategy === "quant_engine"
+                    ? "Institutional-grade system using statistical arbitrage, cointegration, and synthetic pair pricing."
+                    : "Strictly correlation-based divergence trading. Opens synchronized two-pair baskets."}
+                </p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Drawdown Settings */}
               <div className="rounded-xl border border-white/10 bg-white/5 p-6">
@@ -178,6 +204,41 @@ export default function RiskPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Quant Engine Specific Settings */}
+              {config?.active_strategy === "quant_engine" && (
+                <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-6 md:col-span-2">
+                  <div className="flex items-center gap-2 mb-4 text-indigo-400">
+                    <Scale className="h-5 w-5" />
+                    <h2 className="font-semibold">FX-QUANT-ENGINE Parameters</h2>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-sm text-white/60 mb-1">Arbitrage Z-Score Entry</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={config?.quant_zscore_entry || 2.0}
+                        onChange={(e) => updateField("quant_zscore_entry", parseFloat(e.target.value))}
+                        className="w-full bg-black border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+                      />
+                      <p className="text-xs text-white/40 mt-2">Standard deviations from mean to trigger trade (Default: 2.0).</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-white/60 mb-1">Arbitrage Z-Score Exit</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={config?.quant_zscore_exit || 0.5}
+                        onChange={(e) => updateField("quant_zscore_exit", parseFloat(e.target.value))}
+                        className="w-full bg-black border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+                      />
+                      <p className="text-xs text-white/40 mt-2">Target Z-Score for mean reversion exit (Default: 0.5).</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between pt-4">

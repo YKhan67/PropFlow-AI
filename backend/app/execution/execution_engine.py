@@ -7,11 +7,13 @@ from app.broker.mt5_broker import MT5Bridge
 from app.services.risk_engine import RiskManager
 
 try:
-    from ai.engine.hybrid_engine import HybridDecisionEngine, SignalType
+    from ai.engine.hybrid_engine import HybridDecisionEngine, SignalType as HybridSignalType
+    from ai.engine.quant_engine import FXQuantEngine, SignalType as QuantSignalType
+    from ai.engine.correlation_engine import CorrelationStrategy
     AI_AVAILABLE = True
 except ImportError:
     AI_AVAILABLE = False
-    logging.warning("AI module not found. Using dummy signals.")
+    logging.warning("AI modules not found. Using dummy signals.")
 
 class ExecutionEngine:
     def __init__(self, symbols, risk_config, mt5_login=None, mt5_password=None, mt5_server=None, timeframe="H1"):
@@ -26,7 +28,7 @@ class ExecutionEngine:
         self.account_cache = {}
         self._current_symbol_idx = 0
         self.timeframe_str = timeframe
-        self.data_lock = threading.Lock() # Added lock to fix the attribute error
+        self.data_lock = threading.Lock()
 
         # Mapping timeframe strings to MT5 constants
         self.tf_map = {
@@ -39,19 +41,23 @@ class ExecutionEngine:
         self.bridge.initialize()
 
         if AI_AVAILABLE:
-            logging.info("AI Decision Engine successfully loaded.")
-            self.ai_engine = HybridDecisionEngine()
-            self.ai_engine._trained = False
+            logging.info("AI Decision Engines successfully loaded.")
+            self.ai_hmm = HybridDecisionEngine()
+            self.ai_hmm._trained = False
 
-            # Sync initial settings
-            self.ai_engine.signal_gate.dd_config.min_time_between_trades_minutes = risk_config.get('min_time_between_trades', 5)
-            self.ai_engine.signal_gate.dd_config.daily_drawdown_limit_pct = risk_config.get('max_daily_drawdown', 0.05) * 100
-            self.ai_engine.signal_gate.dd_config.total_drawdown_limit_pct = risk_config.get('max_total_drawdown', 0.10) * 100
+            # Sync initial settings for HMM
+            self.ai_hmm.signal_gate.dd_config.min_time_between_trades_minutes = risk_config.get('min_time_between_trades', 5)
+            self.ai_hmm.signal_gate.dd_config.daily_drawdown_limit_pct = risk_config.get('max_daily_drawdown', 0.05) * 100
+            self.ai_hmm.signal_gate.dd_config.total_drawdown_limit_pct = risk_config.get('max_total_drawdown', 0.10) * 100
+
+            self.ai_quant = FXQuantEngine(risk_config)
+            self.ai_corr = CorrelationStrategy(risk_config)
         else:
-            self.ai_engine = None
+            self.ai_hmm = None
+            self.ai_quant = None
+            self.ai_corr = None
 
-        # Start the background data synchronizer (Dashboard & Risk)
-        # This thread handles all MT5 communication to keep the UI fast
+        # Start the background data synchronizer
         self.sync_thread = threading.Thread(target=self._data_sync_loop, daemon=True)
         self.sync_thread.start()
 
@@ -60,13 +66,18 @@ class ExecutionEngine:
         logging.info("Background Sync Loop Started.")
         while True:
             try:
-                # 1. Update Market Prices (Fast)
+                # 1. Update Market Prices (User Symbols + Institutional Anchors)
+                # We fetch all 7 majors plus whatever the user has active
+                target_symbols = list(set(self.symbols + ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "USDCHF"]))
+
                 ticker_data = {}
-                for symbol in self.symbols:
+                for symbol in target_symbols:
                     ticker = self.bridge.get_symbol_info(symbol)
                     if ticker:
                         ticker_data[symbol] = ticker
-                self.market_scanner = ticker_data
+
+                with self.data_lock:
+                    self.market_scanner = ticker_data
 
                 # 2. Update Account & Trades (Fast)
                 self.active_trades = self.bridge.get_open_positions()
@@ -86,7 +97,9 @@ class ExecutionEngine:
                     target_symbol = self.symbols[self._current_symbol_idx]
                     self._evaluate_symbol_strategy(target_symbol)
 
-                    # Move to next symbol for next loop
+                    # Also evaluate group-based strategies (Strategy 3)
+                    self._evaluate_all_symbols_strategy()
+
                     self._current_symbol_idx = (self._current_symbol_idx + 1) % len(self.symbols)
 
                 # 5. Check Basket Exit
@@ -99,48 +112,131 @@ class ExecutionEngine:
             except Exception as e:
                 logging.error(f"Sync Loop Error: {e}")
 
-            time.sleep(1) # High-speed refresh for dashboard
+            time.sleep(1)
 
     def _evaluate_symbol_strategy(self, symbol):
-        """Slow AI logic handled for a single symbol."""
+        """Strategy logic routing."""
         data = self.bridge.get_market_data(symbol, timeframe=self.mt5_timeframe, count=250)
         if data is not None and len(data) > 0:
-            logging.info(f"[{symbol}] Data retrieved ({len(data)} bars). Evaluating AI...")
-            if AI_AVAILABLE and self.ai_engine:
-                try:
-                    df = pd.DataFrame.from_records(data)
-                    if not self.ai_engine._trained:
-                        logging.info(f"[{symbol}] Initializing AI model...")
-                        self.ai_engine.train_regime_model(df)
+            active_strategy = self.risk_manager.config.get('active_strategy', 'hybrid_hmm')
 
-                    decision = self.ai_engine.evaluate(df, symbol=symbol, timeframe=self.timeframe_str)
-                    with self.data_lock:
-                        self.symbol_regimes[symbol] = decision.regime
+            if active_strategy == "hybrid_hmm" and self.ai_hmm:
+                self._evaluate_hmm_strategy(symbol, data)
+            elif active_strategy == "quant_engine" and self.ai_quant:
+                self._evaluate_quant_strategy(symbol, data)
+            elif active_strategy == "correlation_reversion" and self.ai_corr:
+                # We'll evaluate all symbols at once for correlation in the main loop instead
+                pass
 
-                    # Detailed Decision Log
-                    if decision.signal == SignalType.HOLD:
-                        logging.info(f"[{symbol}] AI: HOLD (Regime: {decision.regime}, Filter: {decision.filter_decision}, Reason: {decision.filter_reason})")
-                    else:
-                        logging.info(f"[{symbol}] AI Signal: {decision.signal} (Regime: {decision.regime})")
+    def _evaluate_all_symbols_strategy(self):
+        """Logic for strategies that require analyzing multiple symbols together."""
+        active_strategy = self.risk_manager.config.get('active_strategy', 'hybrid_hmm')
+        if active_strategy == "correlation_reversion" and self.ai_corr:
+            self._evaluate_correlation_strategy()
 
-                    if decision.is_actionable:
-                        max_pos = self.risk_manager.config.get('max_position_size', 0.1)
-                        signal = {
-                            'symbol': symbol,
-                            'type': 0 if decision.signal in [SignalType.LONG, SignalType.REDUCED_LONG] else 1,
-                            'volume': float(max_pos)
-                        }
-                        status, validated_signal = self.risk_manager.check_order(
-                            signal, active_trades_count=len(self.active_trades)
-                        )
-                        if status in ['approved', 'modified']:
-                            self.bridge.place_order(
-                                symbol=validated_signal['symbol'],
-                                order_type=validated_signal['type'],
-                                volume=validated_signal['volume']
-                            )
-                except Exception as e:
-                    logging.error(f"AI Strategy Error [{symbol}]: {e}")
+    def _evaluate_correlation_strategy(self):
+        try:
+            # 1. Gather data for all symbols
+            all_data = {}
+            for sym in self.symbols:
+                data = self.bridge.get_market_data(sym, timeframe=self.mt5_timeframe, count=100)
+                if data is not None and len(data) > 0:
+                    all_data[sym] = pd.DataFrame.from_records(data)
+
+            # 2. Evaluate
+            decisions, statuses = self.ai_corr.evaluate(all_data)
+
+            # Update Dashboard status tags
+            with self.data_lock:
+                for sym, status in statuses.items():
+                    self.symbol_regimes[sym] = status
+
+            # 3. Process Decisions (Baskets)
+            for d in decisions:
+                logging.info(f"!!! Correlation Signal: {d.reason} (Coef: {d.coefficient:.2f}) !!!")
+
+                # Check if we already have a trade in this pair combo
+                existing = any(t['symbol'] in [d.pair_a, d.pair_b] for t in self.active_trades)
+                if not existing:
+                    # Execute synchronized basket
+                    for signal in d.signals:
+                        self._execute_signal(signal)
+                    logging.info(f"!!! Correlation Basket Opened: {d.pair_a} & {d.pair_b} !!!")
+
+        except Exception as e:
+            logging.error(f"Correlation Strategy Error: {e}")
+
+    def _evaluate_hmm_strategy(self, symbol, data):
+        try:
+            df = pd.DataFrame.from_records(data)
+            if not self.ai_hmm._trained:
+                logging.info(f"[{symbol}] Initializing HMM model...")
+                self.ai_hmm.train_regime_model(df)
+
+            decision = self.ai_hmm.evaluate(df, symbol=symbol, timeframe=self.timeframe_str)
+            with self.data_lock:
+                self.symbol_regimes[symbol] = decision.regime
+
+            if decision.signal != HybridSignalType.HOLD:
+                logging.info(f"[{symbol}] HMM Decision: {decision.signal} (Regime: {decision.regime})")
+
+            if decision.is_actionable:
+                max_pos = self.risk_manager.config.get('max_position_size', 0.1)
+                signal = {
+                    'symbol': symbol,
+                    'type': 0 if decision.signal in [HybridSignalType.LONG, HybridSignalType.REDUCED_LONG] else 1,
+                    'volume': float(max_pos)
+                }
+                self._execute_signal(signal)
+        except Exception as e:
+            logging.error(f"HMM Error [{symbol}]: {e}")
+
+    def _evaluate_quant_strategy(self, symbol, data):
+        try:
+            df = pd.DataFrame.from_records(data)
+            ticker = self.market_scanner.get(symbol)
+            current_price = ticker['last'] if ticker else df['close'].iloc[-1]
+
+            # Use the new institutional execution logic
+            decision = self.ai_quant.evaluate(symbol, df, self.market_scanner, current_price)
+
+            with self.data_lock:
+                self.symbol_regimes[symbol] = decision.market_regime
+
+            if decision.direction != "hold":
+                logging.info(f"[{symbol}] institutional Analysis: {decision.direction.upper()} (Regime: {decision.market_regime}) Reason: {decision.rejection_reason}")
+
+            if decision.trade_status == "executed":
+                # Convert direction to MT5 types (0=Buy, 1=Sell)
+                order_type = 0 if decision.direction == "long" else 1
+
+                signal = {
+                    'symbol': symbol,
+                    'type': order_type,
+                    'volume': decision.position_size,
+                    'sl': decision.stop_loss,
+                    'tp': decision.take_profit
+                }
+
+                logging.info(f"!!! institutional SIGNAL APPROVED: {symbol} {decision.direction.upper()} !!!")
+                self._execute_signal(signal)
+            else:
+                if decision.direction != "hold":
+                    logging.info(f"[{symbol}] institutional Trade Filtered: {decision.rejection_reason}")
+
+        except Exception as e:
+            logging.error(f"Quant Error [{symbol}]: {e}")
+
+    def _execute_signal(self, signal):
+        status, validated_signal = self.risk_manager.check_order(
+            signal, active_trades_count=len(self.active_trades)
+        )
+        if status in ['approved', 'modified']:
+            self.bridge.place_order(
+                symbol=validated_signal['symbol'],
+                order_type=validated_signal['type'],
+                volume=validated_signal['volume']
+            )
 
     def start(self):
         logging.info("Trading Engine Activated.")
@@ -153,13 +249,11 @@ class ExecutionEngine:
     def set_timeframe(self, tf_str):
         self.timeframe_str = tf_str
         self.mt5_timeframe = self.tf_map.get(tf_str, 16385)
-        # Force re-training on new timeframe
-        if self.ai_engine:
-            self.ai_engine._trained = False
+        if self.ai_hmm:
+            self.ai_hmm._trained = False
         logging.info(f"Engine timeframe updated to {tf_str}")
 
     def get_account_info(self):
-        # Return cached data so API calls are instant
         return self.account_cache if self.account_cache else self.bridge.get_account_info()
 
     def close_all_trades(self):
@@ -169,30 +263,43 @@ class ExecutionEngine:
         return True
 
     def calculate_total_pnl(self):
-        # Calculate NET floating profit (Profit + Commission + Swap)
         return sum(trade.get('profit', 0) + trade.get('commission', 0) + trade.get('swap', 0) for trade in self.active_trades)
 
     def get_active_trades(self):
         return self.active_trades
 
     def get_market_scanner(self):
-        enriched = []
-        for symbol, data in self.market_scanner.items():
-            enriched.append({
-                "symbol": symbol,
-                "bid": data['bid'],
-                "ask": data['ask'],
-                "change": data.get('change', 0.0),
-                "trend": data.get('trend', "neutral"),
-                "regime": self.symbol_regimes.get(symbol, "analyzing...")
-            })
-        return enriched
+        with self.data_lock:
+            # Pre-calculate pnl per symbol from active trades
+            symbol_pnl = {}
+            for trade in self.active_trades:
+                sym = trade['symbol']
+                # Net profit = profit + commission + swap
+                net = trade.get('profit', 0) + trade.get('commission', 0) + trade.get('swap', 0)
+                symbol_pnl[sym] = symbol_pnl.get(sym, 0) + net
+
+            enriched = []
+            for symbol, data in self.market_scanner.items():
+                enriched.append({
+                    "symbol": symbol,
+                    "bid": data['bid'],
+                    "ask": data['ask'],
+                    "change": data.get('change', 0.0),
+                    "trend": data.get('trend', "neutral"),
+                    "regime": self.symbol_regimes.get(symbol, "analyzing..."),
+                    "pnl": round(symbol_pnl.get(symbol, 0), 2)
+                })
+            return enriched
 
     def get_equity_history(self):
         return [{"timestamp": p['time'] * 1000, "equity": p['equity']} for p in self.equity_history]
 
     def get_market_regime(self):
-        return ""
+        # Return the active strategy name for display
+        active = self.risk_manager.config.get('active_strategy', 'hybrid_hmm')
+        if active == "hybrid_hmm": return "Hybrid AI"
+        if active == "quant_engine": return "FX-QUANT"
+        return "Correlation Reversion"
 
     def generate_dummy_signal(self, symbol):
         return None

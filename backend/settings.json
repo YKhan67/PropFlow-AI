@@ -1,24 +1,41 @@
 {
     "risk": {
-        "max_daily_drawdown": 0.05,
-        "max_total_drawdown": 0.1,
+        "max_daily_drawdown": 0.1,
+        "max_total_drawdown": 0.2,
         "max_position_size": 1,
         "account_balance": 300867,
         "scale_down_excess": false,
         "max_active_trades": 50,
-        "global_take_profit": 200,
-        "min_time_between_trades": 1
+        "global_take_profit": 500,
+        "min_time_between_trades": 1,
+        "active_strategy": "correlation_reversion",
+        "quant_zscore_entry": 1.8,
+        "quant_zscore_exit": 0.7
     },
     "symbols": [
         "EURUSD",
-        "NZDUSD",
-        "XAUUSD",
-        "XRPUSD",
-        "ORCL",
-        "IBM",
-        "HPE"
+        "GBPUSD",
+        "XAUUSD"
     ],
-    "timeframe": "M30",
+    "symbols_quant": [
+        "EURUSD",
+        "GBPUSD",
+        "USDJPY",
+        "USDCHF",
+        "USDCAD",
+        "AUDUSD",
+        "NZDUSD"
+    ],
+    "symbols_corr": [
+        "EURUSD",
+        "GBPUSD",
+        "USDCHF",
+        "USDJPY",
+        "AUDUSD",
+        "NZDUSD",
+        "USDCAD"
+    ],
+    "timeframe": "M5",
     "mt5": {
         "login": "",
         "password": "",

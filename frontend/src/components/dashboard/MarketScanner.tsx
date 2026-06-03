@@ -6,6 +6,7 @@ interface MarketData {
   change: string;
   trend: "up" | "down";
   regime?: string;
+  pnl?: number;
 }
 
 interface MarketScannerProps {
@@ -33,6 +34,15 @@ export function MarketScanner({ data = defaultMarkets }: MarketScannerProps) {
                 {m.regime && (
                   <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5 text-white/40 border border-white/10">
                     {m.regime}
+                  </span>
+                )}
+                {m.pnl !== undefined && m.pnl !== 0 && (
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                    m.pnl >= 0
+                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                      : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                  }`}>
+                    {m.pnl >= 0 ? "+" : ""}{m.pnl}
                   </span>
                 )}
               </div>

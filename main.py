@@ -3,21 +3,23 @@ import sys
 import os
 import uvicorn
 
-# Add backend and root directories to sys.path
-sys.path.append(os.path.dirname(__file__))
-sys.path.append(os.path.join(os.path.dirname(__file__), "backend"))
+# Add backend directory to sys.path
+root_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(root_dir, "backend"))
 
-# Configure logging
+# On Windows, this is the standard way to enable ANSI colors in CMD/PowerShell
+if sys.platform == "win32":
+    os.system("")
+
+# Simple, original logging format
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 
 def main():
-    # To run the FastAPI server, we point to the app.main module inside the backend directory
+    # reload=True uses Uvicorn's internal color logic
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True, app_dir="backend")
 
 if __name__ == "__main__":

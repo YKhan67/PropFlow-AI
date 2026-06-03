@@ -352,13 +352,13 @@ class HybridDecisionEngine:
             final_signal = SignalType.HOLD
             # Log why it was blocked if a strategy signal was present
             if signal != SignalType.HOLD:
-                print(f"!!! SIGNAL BLOCKED: {symbol} {signal} (Reason: {filter_reason}) !!!")
+                logging.info(f"!!! SIGNAL BLOCKED: {symbol} {signal} (Reason: {filter_reason}) !!!")
         else:
             final_signal = signal
 
         # Force decision log to terminal for better visibility
         if final_signal != SignalType.HOLD:
-            print(f"!!! SIGNAL GENERATED: {symbol} {final_signal} (Confidence: {confidence:.2f}) !!!")
+            logging.info(f"!!! SIGNAL GENERATED: {symbol} {final_signal} (Confidence: {confidence:.2f}) !!!")
 
         decision = EngineDecision(
             signal=final_signal,

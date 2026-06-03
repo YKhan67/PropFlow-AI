@@ -27,6 +27,7 @@ export interface MarketSymbol {
   change: number;
   trend: "up" | "down";
   regime?: string;
+  pnl?: number;
 }
 
 export interface EquityHistoryPoint {
@@ -64,6 +65,7 @@ export interface SystemStatus {
   };
   active_trades_count: number;
   market_regime: string;
+  active_strategy: string;
 }
 
 export interface RiskConfig {
@@ -75,11 +77,15 @@ export interface RiskConfig {
   max_active_trades: number;
   global_take_profit: number;
   min_time_between_trades: number;
+  active_strategy: "hybrid_hmm" | "quant_engine" | "correlation_reversion";
+  quant_zscore_entry?: number;
+  quant_zscore_exit?: number;
 }
 
 export interface AppConfig {
   risk: RiskConfig;
-  symbols: string[];
+  symbols: string[]; // This will now represent symbols for HMM Strategy
+  symbols_quant: string[]; // New field for Quant Strategy symbols
   timeframe?: string;
   mt5?: {
     login?: string;
