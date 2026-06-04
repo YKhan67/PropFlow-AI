@@ -124,11 +124,7 @@ class RegimeParams:
 
 
 class HybridDecisionEngine:
-    """Main hybrid decision engine.
-
-    Combines HMM-based regime detection with rule-based signal gating
-    and regime-adaptive parameter tuning.
-    """
+    """Main hybrid decision engine."""
 
     def __init__(
         self,
@@ -139,21 +135,31 @@ class HybridDecisionEngine:
         signal_fn: Optional[Callable] = None,
     ):
         self.feature_config = feature_config or FeatureConfig()
-        self.regime_detector = RegimeHMM(config=hmm_config or HMMConfig())
+        self.hmm_config = hmm_config or HMMConfig()
+        self.vol_filter_config = vol_filter_config or VolatilityFilterConfig()
+        self.dd_filter_config = dd_filter_config or DrawdownFilterConfig()
+
+        # Symbol-specific detectors and states
+        self.detectors: dict[str, RegimeHMM] = {}
         self.signal_gate = SignalGate(
-            vol_config=vol_filter_config or VolatilityFilterConfig(),
-            dd_config=dd_filter_config or DrawdownFilterConfig(),
+            vol_config=self.vol_filter_config,
+            dd_config=self.dd_filter_config,
         )
         self._signal_fn = signal_fn or self._default_signal_logic
-        self._trained: bool = False
+        self._trained_symbols: set[str] = set()
         self._last_regime: str = "unknown"
         self._regime_history: list[str] = []
         self._decision_history: list[EngineDecision] = []
 
-    def train_regime_model(self, ohlcv: pd.DataFrame) -> "HybridDecisionEngine":
-        """Train the HMM regime detector on historical data."""
-        self.regime_detector.fit(ohlcv, self.feature_config)
-        self._trained = True
+    def is_trained(self, symbol: str) -> bool:
+        return symbol in self._trained_symbols
+
+    def train_regime_model(self, symbol: str, ohlcv: pd.DataFrame) -> "HybridDecisionEngine":
+        """Train a symbol-specific HMM regime detector."""
+        detector = RegimeHMM(config=self.hmm_config)
+        detector.fit(ohlcv, self.feature_config)
+        self.detectors[symbol] = detector
+        self._trained_symbols.add(symbol)
         return self
 
     def load_regime_model(self, path: str) -> "HybridDecisionEngine":
@@ -261,39 +267,19 @@ class HybridDecisionEngine:
     def evaluate(
         self,
         ohlcv: pd.DataFrame,
-        symbol: str = "",
+        symbol: str,
         timeframe: str = "H1",
         bar_index: int = -1,
         is_friday: bool = False,
         is_monday: bool = False,
     ) -> EngineDecision:
-        """Evaluate a complete trading decision for the current bar.
+        """Evaluate a complete trading decision for a specific symbol."""
+        if not self.is_trained(symbol):
+            raise RuntimeError(f"Regime detector for {symbol} not trained.")
 
-        Pipeline:
-          1. Detect market regime via HMM
-          2. Get regime-adaptive parameters
-          3. Generate signal (strategy logic)
-          4. Apply rule-based filters
-          5. Return final decision with confidence scaling
-
-        Args:
-            ohlcv: Full OHLCV DataFrame (needs at least FeatureConfig.max_lookback bars)
-            symbol: Trading pair name
-            timeframe: Current evaluation timeframe (e.g., M30, H1)
-            bar_index: Index of current bar (-1 = last)
-            is_friday: Whether current bar is Friday
-            is_monday: Whether current bar is Monday
-
-        Returns:
-            EngineDecision with signal, confidence, and filter status
-        """
-        if not self._trained:
-            raise RuntimeError(
-                "Regime detector not trained. Call train_regime_model() or load_regime_model() first."
-            )
-
-        # 1. Regime detection
-        state_ids, state_labels = self.regime_detector.predict(ohlcv)
+        # 1. Regime detection using symbol-specific model
+        detector = self.detectors[symbol]
+        state_ids, state_labels = detector.predict(ohlcv)
         regime_probs = self.regime_detector.get_regime_probs(ohlcv)
 
         current_regime = state_labels[bar_index] if bar_index < len(state_labels) else state_labels[-1]

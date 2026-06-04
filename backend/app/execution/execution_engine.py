@@ -47,7 +47,6 @@ class ExecutionEngine:
         if AI_AVAILABLE:
             logging.info("AI Decision Engines successfully loaded.")
             self.ai_hmm = HybridDecisionEngine()
-            self.ai_hmm._trained = False
 
             # Sync initial settings for HMM
             self.ai_hmm.signal_gate.dd_config.min_time_between_trades_minutes = risk_config.get('min_time_between_trades', 5)
@@ -211,9 +210,9 @@ class ExecutionEngine:
     def _evaluate_hmm_strategy(self, symbol, data):
         try:
             df = pd.DataFrame.from_records(data)
-            if not self.ai_hmm._trained:
+            if not self.ai_hmm.is_trained(symbol):
                 logging.info(f"[{symbol}] Initializing HMM model...")
-                self.ai_hmm.train_regime_model(df)
+                self.ai_hmm.train_regime_model(symbol, df)
 
             decision = self.ai_hmm.evaluate(df, symbol=symbol, timeframe=self.timeframe_str)
             with self.data_lock:
@@ -293,7 +292,8 @@ class ExecutionEngine:
         self.timeframe_str = tf_str
         self.mt5_timeframe = self.tf_map.get(tf_str, 16385)
         if self.ai_hmm:
-            self.ai_hmm._trained = False
+            # Force re-training all symbols for new timeframe
+            self.ai_hmm._trained_symbols = set()
         logging.info(f"Engine timeframe updated to {tf_str}")
 
     def get_account_info(self):
