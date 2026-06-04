@@ -66,13 +66,13 @@ class ExecutionEngine:
         logging.info("Background Sync Loop Started.")
         while True:
             try:
-            # 1. Update Market Prices (User Symbols + Institutional Anchors)
-            target_symbols = list(set(
-                self.symbols +
-                ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "USDCHF", "XAUUSD", "XAGUSD"]
-            ))
+                # 1. Update Market Prices (User Symbols + Institutional Anchors)
+                target_symbols = list(set(
+                    self.symbols +
+                    ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "USDCHF", "XAUUSD", "XAGUSD"]
+                ))
 
-            for symbol in target_symbols:
+                for symbol in target_symbols:
                     ticker = self.bridge.get_symbol_info(symbol)
                     if ticker:
                         with self.data_lock:
@@ -83,7 +83,7 @@ class ExecutionEngine:
                 self.account_cache = self.bridge.get_account_info()
 
                 # 3. Update History & Risk
-                current_pnl = sum(p.get('profit', 0) for p in self.active_trades)
+                current_pnl = self.calculate_total_pnl()
                 new_equity = self.account_cache.get("equity", self.risk_manager.starting_balance)
                 self.risk_manager.update_equity(new_equity)
 

@@ -15,8 +15,18 @@ import { useState, useEffect } from "react";
 export default function Dashboard() {
   const { status, trades, markets, history, loading, error, refetch } = useDashboardData();
   const [actionLoading, setActionLoading] = useState(false);
-  const [selectedSymbol, setSelectedSymbol] = useState<string>("EURUSD");
+  const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [symbolHistory, setSymbolsHistory] = useState<{time: string, price: number}[]>([]);
+
+  // Auto-select first symbol if none selected or if current selection is no longer available
+  useEffect(() => {
+    if (markets.length > 0) {
+      const isSelectedAvailable = markets.some(m => m.symbol === selectedSymbol);
+      if (!selectedSymbol || !isSelectedAvailable) {
+        setSelectedSymbol(markets[0].symbol);
+      }
+    }
+  }, [markets, selectedSymbol]);
 
   // Update symbol history whenever dashboard data refreshes or symbol changes
   useEffect(() => {
@@ -27,11 +37,16 @@ export default function Dashboard() {
 
   const fetchSymbolHistory = async (symbol: string) => {
     try {
-      console.log(`Fetching price history for ${symbol}...`);
+      console.log(`Refreshing chart for ${symbol}...`);
       const data = await apiService.getSymbolHistory(symbol);
       if (data && data.length > 0) {
         setSymbolsHistory(data.map(d => ({
-          time: new Date(d.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          // Added seconds to verify refresh visually
+          time: new Date(d.time * 1000).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          }),
           price: d.close
         })));
       }
