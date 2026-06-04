@@ -18,19 +18,23 @@ export default function Dashboard() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>("EURUSD");
   const [symbolHistory, setSymbolsHistory] = useState<{time: string, price: number}[]>([]);
 
+  // Update symbol history whenever dashboard data refreshes or symbol changes
   useEffect(() => {
     if (selectedSymbol) {
       fetchSymbolHistory(selectedSymbol);
     }
-  }, [selectedSymbol]);
+  }, [selectedSymbol, markets]);
 
   const fetchSymbolHistory = async (symbol: string) => {
     try {
+      console.log(`Fetching price history for ${symbol}...`);
       const data = await apiService.getSymbolHistory(symbol);
-      setSymbolsHistory(data.map(d => ({
-        time: new Date(d.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        price: d.close
-      })));
+      if (data && data.length > 0) {
+        setSymbolsHistory(data.map(d => ({
+          time: new Date(d.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          price: d.close
+        })));
+      }
     } catch (err) {
       console.error("Failed to fetch symbol history", err);
     }

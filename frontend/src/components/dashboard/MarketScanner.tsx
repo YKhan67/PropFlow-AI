@@ -28,9 +28,12 @@ export function MarketScanner({ data = defaultMarkets, onSelectSymbol, selectedS
         {data.map((m) => (
           <div
             key={m.symbol}
-            onClick={() => onSelectSymbol?.(m.symbol)}
-            className={`flex items-center justify-between border-b border-white/5 pb-2 last:border-0 cursor-pointer hover:bg-white/5 transition-colors p-2 rounded-lg ${
-              selectedSymbol === m.symbol ? 'ring-1 ring-blue-500 bg-blue-500/5' : ''
+            onClick={() => {
+              console.log("Selected symbol:", m.symbol);
+              onSelectSymbol?.(m.symbol);
+            }}
+            className={`flex items-center justify-between border-b border-white/5 pb-2 last:border-0 cursor-pointer hover:bg-white/10 transition-all p-2 rounded-lg ${
+              selectedSymbol === m.symbol ? 'ring-2 ring-blue-500 bg-blue-500/10' : ''
             }`}
           >
             <div className="flex-1">
