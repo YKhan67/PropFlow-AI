@@ -13,9 +13,7 @@
         "quant_zscore_exit": 0.7
     },
     "symbols": [
-        "XAUUSD",
-        "EURUSD",
-        "GBPUSD"
+        "XAUUSD"
     ],
     "symbols_quant": [
         "EURUSD",

@@ -114,11 +114,11 @@ class RegimeParams:
         is_metal = any(m in symbol.upper() for m in ["XAU", "XAG", "GOLD", "SILVER"])
 
         if is_metal:
-            # Gold/Silver need ~4x higher thresholds to consider a trend 'strong'
-            params.trend_threshold *= 4.0
+            # Neutralize multipliers to allow equal sensitivity
+            params.trend_threshold *= 1.0
         else:
-            # FX pairs are very quiet; use sensitive thresholds (already multiplied by tf)
-            params.trend_threshold *= 0.5
+            # FX pairs are slightly more sensitive
+            params.trend_threshold *= 0.8
 
         return params
 
@@ -248,10 +248,9 @@ class HybridDecisionEngine:
                 pass
 
         elif regime == "volatile":
-            # Highly volatile: only trade if very strong signal, else HOLD
-            # Look for breakout with confirmation
-            if abs(roc5) > regime_params.trend_threshold * 2: # Lowered from 3
-                confidence = min(0.6, abs(roc5) / 5.0)  # Lowered denominator
+            # Highly volatile: trade if signal is stronger than normal trend requirement
+            if abs(roc5) > regime_params.trend_threshold * 1.5:
+                confidence = min(0.6, abs(roc5) / 1.5)
                 return SignalType.REDUCED_LONG if roc5 > 0 else SignalType.REDUCED_SHORT, confidence
             else:
                 return SignalType.HOLD, 0.0

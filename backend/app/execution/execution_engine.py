@@ -30,6 +30,10 @@ class ExecutionEngine:
         self.timeframe_str = timeframe
         self.data_lock = threading.Lock()
 
+        # Real-time 5s price buffer for charts
+        self.price_history_5s = {} # {symbol: [{time: timestamp, price: float}, ...]}
+        self._last_5s_update = 0
+
         # Mapping timeframe strings to MT5 constants
         self.tf_map = {
             "M1": 1, "M5": 5, "M15": 15, "M30": 30,
@@ -77,6 +81,24 @@ class ExecutionEngine:
                     if ticker:
                         with self.data_lock:
                             self.market_scanner[symbol] = ticker
+
+                            # 1.1 Update 5s Price Buffer for high-res charts
+                            now = time.time()
+                            if now - getattr(self, '_last_5s_update', 0) >= 5:
+                                if symbol not in self.price_history_5s:
+                                    self.price_history_5s[symbol] = []
+
+                                self.price_history_5s[symbol].append({
+                                    "time": int(now),
+                                    "close": ticker['bid']
+                                })
+                                # Limit to last 100 points
+                                if len(self.price_history_5s[symbol]) > 100:
+                                    self.price_history_5s[symbol].pop(0)
+
+                # Reset global timer after iterating all symbols
+                if time.time() - getattr(self, '_last_5s_update', 0) >= 5:
+                    self._last_5s_update = time.time()
 
                 # 2. Update Account & Trades (Fast)
                 self.active_trades = self.bridge.get_open_positions()
@@ -207,6 +229,7 @@ class ExecutionEngine:
                     'type': 0 if decision.signal in [HybridSignalType.LONG, HybridSignalType.REDUCED_LONG] else 1,
                     'volume': float(max_pos)
                 }
+                logging.info(f"!!! HMM SIGNAL APPROVED: {symbol} {decision.signal.value.upper()} !!!")
                 self._execute_signal(signal)
         except Exception as e:
             logging.error(f"HMM Error [{symbol}]: {e}")

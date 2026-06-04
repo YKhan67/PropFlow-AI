@@ -177,9 +177,14 @@ def get_market_scanner():
 
 @app.get("/market/history/{symbol}")
 def get_market_history(symbol: str):
-    logging.info(f"Fetching market history for chart: {symbol} (TF: {engine.timeframe_str})")
-    # Use the same timeframe selected in settings for the dashboard chart
-    data = engine.bridge.get_market_data(symbol, timeframe=engine.mt5_timeframe, count=100)
+    # Check if we have high-res 5s data in the engine buffer
+    with engine.data_lock:
+        if symbol in engine.price_history_5s and len(engine.price_history_5s[symbol]) > 0:
+            return engine.price_history_5s[symbol]
+
+    # Fallback to MT5 if buffer is empty
+    logging.info(f"Fetching market history from MT5: {symbol}")
+    data = engine.bridge.get_market_data(symbol, count=100)
     if data is not None:
         import pandas as pd
         df = pd.DataFrame.from_records(data)
