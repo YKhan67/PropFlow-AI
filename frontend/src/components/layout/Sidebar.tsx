@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, LineChart, ShieldAlert, Settings, HelpCircle, LogOut } from "lucide-react";
+import { LayoutDashboard, LineChart, ShieldAlert, Settings, HelpCircle, LogOut, Activity } from "lucide-react";
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -10,6 +10,7 @@ export function Sidebar() {
   const items = [
     { icon: LayoutDashboard, label: "Dashboard", href: "/" },
     { icon: LineChart, label: "Analytics", href: "/analytics" },
+    { icon: Activity, label: "Backtest", href: "/backtest" },
     { icon: ShieldAlert, label: "Risk Manager", href: "/risk" },
     { icon: Settings, label: "Settings", href: "/settings" },
   ];

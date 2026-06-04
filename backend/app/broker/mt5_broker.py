@@ -119,6 +119,34 @@ class MT5Bridge:
             }
             return pd.DataFrame(data).to_records(index=False)
 
+    def get_market_data_range(self, symbol, timeframe, date_from, date_to):
+        """Fetches historical data for a specific range."""
+        if MT5_AVAILABLE:
+            if not self.connected:
+                self.initialize()
+
+            rates = mt5.copy_rates_range(symbol, timeframe, date_from, date_to)
+            return rates
+        else:
+            # Mock data for range
+            import numpy as np
+            import pandas as pd
+            # Calculate number of bars based on range and timeframe (roughly)
+            # This is a simplification for mock mode
+            count = 1000
+            dates = pd.date_range(start=date_from, end=date_to, periods=count)
+            data = {
+                'time': dates.view(np.int64) // 10**9,
+                'open': np.random.uniform(1.0, 1.1, count),
+                'high': np.random.uniform(1.1, 1.2, count),
+                'low': np.random.uniform(0.9, 1.0, count),
+                'close': np.random.uniform(1.0, 1.1, count),
+                'tick_volume': np.random.randint(100, 1000, count),
+                'spread': [2] * count,
+                'real_volume': [0] * count
+            }
+            return pd.DataFrame(data).to_records(index=False)
+
     def place_order(self, symbol, order_type, volume, price=None, sl=None, tp=None):
         if MT5_AVAILABLE:
             tick = mt5.symbol_info_tick(symbol)

@@ -80,10 +80,12 @@ class GoldScalperStrategy:
         prev_low = low[-2]
 
         # ENTRY LOGIC (BUY ONLY)
-        # RSI(14) > 60 AND RSI > RSI_MA AND Close > PrevClose AND ADX Rising AND +DI > -DI
         is_rsi_bullish = curr_rsi > 60 and curr_rsi > curr_rsi_ma
         is_candle_bullish = curr_close > prev_close
         is_trend_strong = curr_adx > prev_adx and plus_di > minus_di
+
+        # EXIT LOGIC (Current Close < Previous Low)
+        is_exit_signal = curr_close < prev_low
 
         final_signal = SignalType.HOLD
         reason = "Monitoring market structure"
@@ -91,12 +93,9 @@ class GoldScalperStrategy:
         if is_rsi_bullish and is_candle_bullish and is_trend_strong:
             final_signal = SignalType.BUY
             reason = "Strategy 4: Bullish Breakout Confirmed"
-
-        # EXIT LOGIC (Managed by engine, but provided here as check)
-        # CurrentClose < PreviousLow
-        if curr_close < prev_low:
-            # Note: The engine will check this for open positions
-            pass
+        elif is_exit_signal:
+            final_signal = SignalType.EXIT
+            reason = "Strategy 4: Bullish Structure Broken (Close < Prev Low)"
 
         return ScalperDecision(
             signal=final_signal,

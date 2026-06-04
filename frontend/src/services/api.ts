@@ -170,4 +170,20 @@ export const apiService = {
     if (!response.ok) throw new Error("Failed to close trade");
     return response.json();
   },
+
+  async runBacktest(params: {
+    strategy: string;
+    symbol: string;
+    timeframe: string;
+    date_from: string;
+    date_to: string;
+  }) {
+    const response = await fetch(`${API_BASE_URL}/backtest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) throw new Error("Failed to run backtest");
+    return response.json();
+  },
 };

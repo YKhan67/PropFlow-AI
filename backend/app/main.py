@@ -3,7 +3,9 @@ import os
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from app.execution.execution_engine import ExecutionEngine
+from app.execution.backtest_engine import BacktestEngine
 import logging
+from datetime import datetime
 
 app = FastAPI(title="PropFlow AI Backend")
 
@@ -71,6 +73,7 @@ engine = ExecutionEngine(
     mt5_server=mt5_conf.get('server'),
     timeframe=config_data.get('timeframe', 'H1')
 )
+backtest_engine = BacktestEngine(engine.bridge)
 
 @app.get("/")
 def read_root():
@@ -179,6 +182,25 @@ def close_all_trades():
 def close_trade(ticket: int):
     success = engine.bridge.close_position(ticket)
     return {"message": f"Close trade {ticket} initiated", "success": success}
+
+@app.post("/backtest")
+def run_backtest(params: dict):
+    try:
+        strategy = params.get('strategy')
+        symbol = params.get('symbol')
+        timeframe = params.get('timeframe')
+        lot_size = params.get('lot_size', 0.1)
+        profit_target = params.get('profit_target', 0)
+        date_from = datetime.fromisoformat(params.get('date_from').replace('Z', ''))
+        date_to = datetime.fromisoformat(params.get('date_to').replace('Z', ''))
+
+        result = backtest_engine.run_backtest(
+            strategy, symbol, timeframe, date_from, date_to, config_data['risk'], lot_size, profit_target
+        )
+        return result
+    except Exception as e:
+        logging.error(f"Backtest error: {e}")
+        return {"error": str(e)}
 
 @app.get("/market/scanner")
 def get_market_scanner():
