@@ -10,35 +10,77 @@ export default function BacktestPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [playbackIdx, setPlaybackIdx] = useState(0);
+  const [currentProcessing, setCurrentProcessing] = useState<string>("");
   const [params, setParams] = useState({
-    strategy: "hybrid_hmm",
-    symbol: "XAUUSD",
+    strategy: "gold_scalper",
+    symbol: "XAUUSD, GBPUSD",
     timeframe: "M30",
     date_from: "2023-01-01",
     date_to: "2023-12-31",
     lot_size: 0.1,
-    profit_target: 100
+    profit_target: 0
   });
 
   const handleRunBacktest = async () => {
-    setLoading(true);
-    setResult(null);
-    setPlaybackIdx(0);
-    try {
-      const data = await apiService.runBacktest({
-        ...params,
-        date_from: new Date(params.date_from).toISOString(),
-        date_to: new Date(params.date_to).toISOString()
-      });
-      setResult(data);
+    const symbolList = params.symbol.split(",").map(s => s.trim()).filter(s => s !== "");
+    if (symbolList.length === 0) {
+      alert("Please enter at least one symbol.");
+      return;
+    }
 
-      // Start playback simulation
-      startPlayback(data.ohlcv.length);
+    setLoading(true);
+    setResult({
+      total_trades: 0,
+      total_usd: 0,
+      win_rate: 0,
+      trades: [],
+      ohlcv: [],
+      period: params.date_from + " to " + params.date_to,
+      strategy: params.strategy
+    });
+    setPlaybackIdx(0);
+
+    let allTrades: any[] = [];
+    let combinedUSD = 0;
+    let mainOHLCV: any[] = [];
+
+    try {
+      for (const sym of symbolList) {
+        setCurrentProcessing(sym);
+        const data = await apiService.runBacktest({
+          ...params,
+          symbol: sym,
+          date_from: new Date(params.date_from).toISOString(),
+          date_to: new Date(params.date_to).toISOString()
+        });
+
+        if (data.error) {
+          console.warn(`Skipping ${sym}: ${data.error}`);
+          continue;
+        }
+
+        allTrades = [...allTrades, ...(data.trades || [])];
+        combinedUSD += data.total_usd || 0;
+        if (mainOHLCV.length === 0) mainOHLCV = data.ohlcv || [];
+
+        // Dynamic update while processing
+        setResult((prev: any) => ({
+          ...prev,
+          total_trades: allTrades.length,
+          total_usd: combinedUSD,
+          trades: allTrades.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()),
+          ohlcv: mainOHLCV,
+          win_rate: allTrades.length > 0 ? (allTrades.filter(t => t.usd > 0).length / allTrades.length * 100).toFixed(1) : "0.0"
+        }));
+      }
+
+      setPlaybackIdx(100);
     } catch (err) {
       console.error(err);
-      alert("Backtest failed. Check backend logs.");
+      alert("Backtest failed. Ensure MT5 is connected.");
     } finally {
       setLoading(false);
+      setCurrentProcessing("");
     }
   };
 
@@ -182,29 +224,28 @@ export default function BacktestPage() {
                 </div>
               )}
 
-              {loading && (
-                <div className="h-full min-h-[400px] flex flex-col items-center justify-center rounded-xl border border-white/10 bg-white/5 animate-pulse">
-                  <Activity className="h-12 w-12 mb-4 text-emerald-500/50" />
-                  <p className="text-white/40 font-medium text-lg">AI is analyzing historical data...</p>
-                  <p className="text-white/20 text-sm mt-2">This may take a minute for large date ranges.</p>
+              {(loading || (result && playbackIdx < 100)) && (
+                <div className="h-full min-h-[400px] flex flex-col items-center justify-center rounded-xl border border-white/10 bg-white/5">
+                  <Activity className="h-12 w-12 mb-4 text-emerald-500 animate-pulse" />
+                  <p className="text-white/40 font-medium text-lg">
+                    {currentProcessing ? `AI Analyzing ${currentProcessing}...` : "Reliving Market History..."}
+                  </p>
+                  <p className="text-white/20 text-sm mt-2">Streaming multi-symbol data to dashboard.</p>
                 </div>
               )}
 
               {result && !loading && (
                 <>
-                  {/* Summary Cards */}
+                  {/* Summary Cards Row 1 */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs text-white/40 uppercase font-bold">Progress</span>
                         <Clock className="h-4 w-4 text-indigo-400" />
                       </div>
-                      <p className="text-2xl font-bold">{Math.round((playbackIdx / (result.ohlcv?.length || 1)) * 100)}%</p>
-                      <div className="w-full bg-white/5 h-1 rounded-full mt-2 overflow-hidden">
-                        <div
-                          className="bg-indigo-500 h-full transition-all duration-300"
-                          style={{ width: `${(playbackIdx / (result.ohlcv?.length || 1)) * 100}%` }}
-                        />
+                      <p className="text-2xl font-bold">100%</p>
+                      <div className="w-full bg-emerald-500/20 h-1 rounded-full mt-2">
+                        <div className="bg-emerald-500 h-full w-full" />
                       </div>
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
@@ -212,71 +253,101 @@ export default function BacktestPage() {
                         <span className="text-xs text-white/40 uppercase font-bold">Win Rate</span>
                         <TrendingUp className="h-4 w-4 text-emerald-500" />
                       </div>
-                      <p className="text-2xl font-bold">
-                        {result.trades?.filter((t: any) => t.close_idx <= playbackIdx).length > 0
-                          ? (result.trades.filter((t: any) => t.close_idx <= playbackIdx && t.pips > 0).length /
-                             result.trades.filter((t: any) => t.close_idx <= playbackIdx).length * 100).toFixed(1)
-                          : "0.0"}%
-                      </p>
+                      <p className="text-2xl font-bold">{result.win_rate}%</p>
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs text-white/40 uppercase font-bold">Total USD</span>
                         <TrendingUp className="h-4 w-4 text-emerald-500" />
                       </div>
-                      <p className={`text-2xl font-bold ${
-                        result.trades?.filter((t: any) => t.close_idx <= playbackIdx).reduce((s: any, t: any) => s + t.usd, 0) >= 0
-                          ? 'text-emerald-400' : 'text-rose-400'
-                      }`}>
-                        ${result.trades?.filter((t: any) => t.close_idx <= playbackIdx).reduce((s: any, t: any) => s + t.usd, 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                      <p className={`text-2xl font-bold ${result.total_usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        ${result.total_usd.toLocaleString(undefined, {minimumFractionDigits: 2})}
                       </p>
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-white/40 uppercase font-bold">Active Symbol</span>
+                        <span className="text-xs text-white/40 uppercase font-bold">Portfolio</span>
                         <Activity className="h-4 w-4 text-blue-500" />
                       </div>
-                      <p className="text-2xl font-bold text-blue-400">{result.symbol}</p>
+                      <p className="text-2xl font-bold text-blue-400">{result.total_trades} trades</p>
                     </div>
                   </div>
 
-                  {/* Trade Log */}
-                  <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+                  {/* Summary Cards Row 2 - Trade Statistics */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-6">
+                      <span className="text-[10px] text-emerald-400/60 uppercase font-bold block mb-1">Highest Profit</span>
+                      <p className="text-xl font-bold text-emerald-400">
+                        ${Math.max(...result.trades.map((t: any) => t.usd), 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-6">
+                      <span className="text-[10px] text-rose-400/60 uppercase font-bold block mb-1">Highest Loss</span>
+                      <p className="text-xl font-bold text-rose-400">
+                        ${Math.min(...result.trades.map((t: any) => t.usd), 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                      <span className="text-[10px] text-white/40 uppercase font-bold block mb-1">Average Profit</span>
+                      <p className="text-xl font-bold text-emerald-400/80">
+                        {(() => {
+                          const wins = result.trades.filter((t: any) => t.usd > 0);
+                          const avg = wins.length > 0 ? wins.reduce((s: any, t: any) => s + t.usd, 0) / wins.length : 0;
+                          return `$${avg.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+                        })()}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                      <span className="text-[10px] text-white/40 uppercase font-bold block mb-1">Average Loss</span>
+                      <p className="text-xl font-bold text-rose-400/80">
+                        {(() => {
+                          const losses = result.trades.filter((t: any) => t.usd < 0);
+                          const avg = losses.length > 0 ? losses.reduce((s: any, t: any) => s + t.usd, 0) / losses.length : 0;
+                          return `$${Math.abs(avg).toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+                        })()}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Trade Log - Scrollable Fix */}
+                  <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden flex flex-col">
                     <div className="p-6 border-b border-white/10 flex items-center justify-between">
                       <h3 className="font-bold text-white uppercase text-xs tracking-widest flex items-center gap-2">
-                        <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                        Live Execution Log
+                        <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                        Full Execution Log
                       </h3>
-                      <span className="text-xs text-white/40">Showing {result.trades?.filter((t: any) => t.close_idx <= playbackIdx).length} executed orders</span>
+                      <span className="text-xs text-white/40">Chronological history for entire portfolio</span>
                     </div>
-                    <table className="w-full text-left">
-                      <thead className="text-xs text-white/40 uppercase bg-white/[0.02]">
-                        <tr>
-                          <th className="px-6 py-4 font-medium">Time</th>
-                          <th className="px-6 py-4 font-medium">Type</th>
-                          <th className="px-6 py-4 font-medium">Entry</th>
-                          <th className="px-6 py-4 font-medium">Exit</th>
-                          <th className="px-6 py-4 font-medium">Result (USD)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {result.trades?.filter((t: any) => t.close_idx <= playbackIdx).slice(-15).reverse().map((t: any, idx: number) => (
-                          <tr key={idx} className="hover:bg-white/5 transition-colors animate-in fade-in slide-in-from-left-2 duration-500">
-                            <td className="px-6 py-4 text-sm font-mono">{t.time}</td>
-                            <td className="px-6 py-4">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.type === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                                {t.type}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-sm font-medium">{t.entry}</td>
-                            <td className="px-6 py-4 text-sm font-medium">{t.exit}</td>
-                            <td className={`px-6 py-4 text-sm font-bold ${t.usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {t.usd >= 0 ? '+' : ''}${t.usd.toFixed(2)}
-                            </td>
+                    <div className="max-h-[500px] overflow-y-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead className="text-xs text-white/40 uppercase bg-white/[0.02] sticky top-0 backdrop-blur-md">
+                          <tr>
+                            <th className="px-6 py-4 font-medium">Time</th>
+                            <th className="px-6 py-4 font-medium">Asset/Type</th>
+                            <th className="px-6 py-4 font-medium">Entry</th>
+                            <th className="px-6 py-4 font-medium">Exit</th>
+                            <th className="px-6 py-4 font-medium text-right">Result (USD)</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {result.trades?.slice().reverse().map((t: any, idx: number) => (
+                            <tr key={idx} className="hover:bg-white/5 transition-colors">
+                              <td className="px-6 py-4 text-xs font-mono text-white/60">{t.time}</td>
+                              <td className="px-6 py-4">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${t.type.includes('BUY') ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+                                  {t.type}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-sm font-medium">{t.entry.toFixed(t.symbol?.includes('JPY') ? 3 : 5)}</td>
+                              <td className="px-6 py-4 text-sm font-medium">{t.exit.toFixed(t.symbol?.includes('JPY') ? 3 : 5)}</td>
+                              <td className={`px-6 py-4 text-sm font-bold text-right ${t.usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {t.usd >= 0 ? '+' : ''}${t.usd.toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </>
               )}
