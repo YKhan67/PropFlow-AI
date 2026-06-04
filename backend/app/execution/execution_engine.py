@@ -67,17 +67,13 @@ class ExecutionEngine:
         while True:
             try:
                 # 1. Update Market Prices (User Symbols + Institutional Anchors)
-                # We fetch all 7 majors plus whatever the user has active
                 target_symbols = list(set(self.symbols + ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "USDCHF"]))
 
-                ticker_data = {}
                 for symbol in target_symbols:
                     ticker = self.bridge.get_symbol_info(symbol)
                     if ticker:
-                        ticker_data[symbol] = ticker
-
-                with self.data_lock:
-                    self.market_scanner = ticker_data
+                        with self.data_lock:
+                            self.market_scanner[symbol] = ticker
 
                 # 2. Update Account & Trades (Fast)
                 self.active_trades = self.bridge.get_open_positions()
@@ -94,6 +90,10 @@ class ExecutionEngine:
 
                 # 4. Strategy Evaluation (One symbol per loop to prevent lag)
                 if self.running and self.symbols:
+                    # Safety check: ensure index is within range of the current symbols list
+                    if self._current_symbol_idx >= len(self.symbols):
+                        self._current_symbol_idx = 0
+
                     target_symbol = self.symbols[self._current_symbol_idx]
                     self._evaluate_symbol_strategy(target_symbol)
 
@@ -141,15 +141,26 @@ class ExecutionEngine:
             for sym in self.symbols:
                 data = self.bridge.get_market_data(sym, timeframe=self.mt5_timeframe, count=100)
                 if data is not None and len(data) > 0:
+                    logging.info(f"[{sym}] Data retrieved (100 bars) for Correlation.")
                     all_data[sym] = pd.DataFrame.from_records(data)
+                else:
+                    logging.warning(f"[{sym}] Failed to retrieve Correlation data. Is it in Market Watch?")
 
             # 2. Evaluate
-            decisions, statuses = self.ai_corr.evaluate(all_data)
+            if not all_data:
+                return
+            decisions, statuses = self.ai_corr.evaluate(all_data, timeframe=self.timeframe_str)
 
             # Update Dashboard status tags
             with self.data_lock:
+                # Update statuses instead of clearing everything to prevent UI flicker
                 for sym, status in statuses.items():
                     self.symbol_regimes[sym] = status
+
+                # Tag anything not in the current active analysis list
+                for sym in self.symbols:
+                    if sym not in statuses:
+                        self.symbol_regimes[sym] = "Wait Data..."
 
             # 3. Process Decisions (Baskets)
             for d in decisions:
@@ -158,9 +169,15 @@ class ExecutionEngine:
                 # Check if we already have a trade in this pair combo
                 existing = any(t['symbol'] in [d.pair_a, d.pair_b] for t in self.active_trades)
                 if not existing:
+                    max_pos = self.risk_manager.config.get('max_position_size', 0.1)
                     # Execute synchronized basket
-                    for signal in d.signals:
-                        self._execute_signal(signal)
+                    for sig in d.signals:
+                        signal_with_vol = {
+                            'symbol': sig['symbol'],
+                            'type': sig['type'],
+                            'volume': float(max_pos)
+                        }
+                        self._execute_signal(signal_with_vol)
                     logging.info(f"!!! Correlation Basket Opened: {d.pair_a} & {d.pair_b} !!!")
 
         except Exception as e:
@@ -279,7 +296,12 @@ class ExecutionEngine:
                 symbol_pnl[sym] = symbol_pnl.get(sym, 0) + net
 
             enriched = []
-            for symbol, data in self.market_scanner.items():
+            # ONLY show symbols that belong to the active strategy
+            for symbol in self.symbols:
+                data = self.market_scanner.get(symbol)
+                if not data:
+                    continue
+
                 enriched.append({
                     "symbol": symbol,
                     "bid": data['bid'],

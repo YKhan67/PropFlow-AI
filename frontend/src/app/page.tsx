@@ -6,14 +6,35 @@ import { StatsCard } from "@/components/dashboard/StatsCard";
 import { EquityChart } from "@/components/charts/EquityChart";
 import { MarketScanner } from "@/components/dashboard/MarketScanner";
 import { ActiveTrades } from "@/components/dashboard/ActiveTrades";
+import { PriceChart } from "@/components/charts/PriceChart";
 import { Wallet, TrendingUp, AlertCircle, Activity, Play, Square, XCircle } from "lucide-react";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { apiService } from "@/services/api";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function Dashboard() {
   const { status, trades, markets, history, loading, error, refetch } = useDashboardData();
   const [actionLoading, setActionLoading] = useState(false);
+  const [selectedSymbol, setSelectedSymbol] = useState<string>("EURUSD");
+  const [symbolHistory, setSymbolsHistory] = useState<{time: string, price: number}[]>([]);
+
+  useEffect(() => {
+    if (selectedSymbol) {
+      fetchSymbolHistory(selectedSymbol);
+    }
+  }, [selectedSymbol]);
+
+  const fetchSymbolHistory = async (symbol: string) => {
+    try {
+      const data = await apiService.getSymbolHistory(symbol);
+      setSymbolsHistory(data.map(d => ({
+        time: new Date(d.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        price: d.close
+      })));
+    } catch (err) {
+      console.error("Failed to fetch symbol history", err);
+    }
+  };
 
   const handleToggleEngine = async () => {
     if (!status) return;
@@ -167,7 +188,14 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
             <div className="lg:col-span-2 space-y-8">
               <EquityChart data={chartData} />
-              <ActiveTrades 
+              {selectedSymbol && (
+                <PriceChart
+                  data={symbolHistory}
+                  title={`${selectedSymbol} Price Action`}
+                  color="#6366f1"
+                />
+              )}
+              <ActiveTrades
                 data={trades.map(t => ({
                   id: t.id,
                   pair: t.symbol,
@@ -189,6 +217,8 @@ export default function Dashboard() {
                   regime: m.regime,
                   pnl: m.pnl
                 }))}
+                onSelectSymbol={setSelectedSymbol}
+                selectedSymbol={selectedSymbol}
               />
               <div className="rounded-xl border border-white/10 bg-gradient-to-br from-emerald-500/20 to-blue-500/20 p-6">
                 <h3 className="font-bold text-white mb-2">Upgrade to Pro</h3>

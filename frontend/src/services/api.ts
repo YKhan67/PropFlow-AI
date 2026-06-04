@@ -129,6 +129,12 @@ export const apiService = {
     return response.json();
   },
 
+  async getSymbolHistory(symbol: string): Promise<{time: number, close: number}[]> {
+    const response = await fetch(`${API_BASE_URL}/market/history/${symbol}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error("Failed to fetch symbol history");
+    return response.json();
+  },
+
   async getAccountHistory(): Promise<EquityHistoryPoint[]> {
     const response = await fetch(`${API_BASE_URL}/account/history`, { cache: 'no-store' });
     if (!response.ok) throw new Error("Failed to fetch account history");

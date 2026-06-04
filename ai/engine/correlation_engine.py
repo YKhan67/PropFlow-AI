@@ -27,15 +27,25 @@ class CorrelationStrategy:
         self.threshold = 0.80
         self.active_pairs = ["EURUSD", "GBPUSD", "USDCHF", "USDJPY", "AUDUSD", "NZDUSD", "USDCAD"]
 
-    def evaluate(self, all_data: Dict[str, pd.DataFrame]) -> Tuple[List[CorrelationDecision], Dict[str, str]]:
+    def evaluate(self, all_data: Dict[str, pd.DataFrame], timeframe: str = "H1") -> Tuple[List[CorrelationDecision], Dict[str, str]]:
         """Analyzes all pair combinations for correlation divergence.
 
         Returns:
             (decisions, pair_statuses)
         """
         decisions = []
-        statuses = {p: "Twin Move" for p in all_data.keys()} # Default state
+        statuses = {p: "Neutral" for p in all_data.keys()}
         pairs = list(all_data.keys())
+
+        # Timeframe-based sensitivity adjustment
+        tf_multipliers = {
+            "M1": 0.05, "M5": 0.1, "M15": 0.25, "M30": 0.5,
+            "H1": 1.0, "H4": 1.5, "D1": 2.5
+        }
+        sensitivity = tf_multipliers.get(timeframe.upper(), 1.0)
+        div_threshold = 0.05 * sensitivity # Much more sensitive
+
+        logging.info(f"--- Correlation Analysis ({timeframe}) ---")
 
         for i in range(len(pairs)):
             for j in range(i + 1, len(pairs)):
@@ -56,21 +66,29 @@ class CorrelationStrategy:
                 series_b = df_b['close'].values[-self.lookback:]
                 corr = np.corrcoef(series_a, series_b)[0, 1]
 
-                decision = self._check_divergence(pair_a, pair_b, series_a, series_b, corr)
+                # Update base status if highly correlated
+                if abs(corr) > self.threshold:
+                    if statuses[pair_a] == "Neutral": statuses[pair_a] = "Correlated"
+                    if statuses[pair_b] == "Neutral": statuses[pair_b] = "Correlated"
+
+                decision = self._check_divergence(pair_a, pair_b, series_a, series_b, corr, div_threshold)
                 if decision:
                     decisions.append(decision)
                     # Mark leading/lagging pairs
-                    if "lagging" in decision.reason.lower():
-                        if decision.signals[0]['symbol'] == pair_a:
-                            statuses[pair_a] = "Leading"
-                            statuses[pair_b] = "Lagging"
-                        else:
-                            statuses[pair_a] = "Lagging"
-                            statuses[pair_b] = "Leading"
+                    if decision.signals[0]['symbol'] == pair_a:
+                        statuses[pair_a] = "Leading"
+                        statuses[pair_b] = "Lagging"
+                    else:
+                        statuses[pair_a] = "Lagging"
+                        statuses[pair_b] = "Leading"
+
+        # Log summary to terminal
+        corr_count = sum(1 for s in statuses.values() if s != "Neutral")
+        logging.info(f"Active Correlations: {corr_count} | Signals: {len(decisions)}")
 
         return decisions, statuses
 
-    def _check_divergence(self, p1: str, p2: str, s1: np.ndarray, s2: np.ndarray, corr: float) -> Optional[CorrelationDecision]:
+    def _check_divergence(self, p1: str, p2: str, s1: np.ndarray, s2: np.ndarray, corr: float, threshold: float) -> Optional[CorrelationDecision]:
         # 1. Normalize series to percentage returns for comparison
         ret1 = (s1[-1] / s1[-5] - 1) * 100 # 5-bar return
         ret2 = (s2[-1] / s2[-5] - 1) * 100
@@ -79,7 +97,7 @@ class CorrelationStrategy:
 
         # Positive Correlation Reversion (+0.80)
         if corr > self.threshold:
-            if diff > 0.2: # Threshold for 'Strong Move' vs 'Lagging'
+            if diff > threshold: # Adaptive threshold
                 if ret1 > ret2: # P1 leads UP, P2 lags
                     return CorrelationDecision(
                         signals=[
@@ -103,8 +121,8 @@ class CorrelationStrategy:
         elif corr < -self.threshold:
             # For negative, we expect (ret1 + ret2) ≈ 0. If sum is large, they are moving together (divergence)
             net_move = ret1 + ret2
-            if abs(net_move) > 0.2:
-                if ret1 > 0 and ret2 > -0.1: # P1 up, P2 failed to fall
+            if abs(net_move) > threshold:
+                if ret1 > 0 and ret2 > - (threshold/2): # P1 up, P2 failed to fall
                     return CorrelationDecision(
                         signals=[
                             {'symbol': p1, 'type': 0}, # BUY P1
@@ -113,7 +131,7 @@ class CorrelationStrategy:
                         pair_a=p1, pair_b=p2, coefficient=corr,
                         reason=f"Neg-Corr Reversion: {p2} failed to invert {p1}"
                     )
-                elif ret1 < 0 and ret2 < 0.1: # P1 down, P2 failed to rise
+                elif ret1 < 0 and ret2 < (threshold/2): # P1 down, P2 failed to rise
                     return CorrelationDecision(
                         signals=[
                             {'symbol': p1, 'type': 1}, # SELL P1

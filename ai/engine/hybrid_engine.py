@@ -13,6 +13,7 @@ Key design goals:
 - Provide explainable decisions with traceable filter reasons
 """
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Callable

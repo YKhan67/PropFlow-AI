@@ -11,6 +11,8 @@ interface MarketData {
 
 interface MarketScannerProps {
   data?: MarketData[];
+  onSelectSymbol?: (symbol: string) => void;
+  selectedSymbol?: string;
 }
 
 const defaultMarkets: MarketData[] = [
@@ -18,7 +20,7 @@ const defaultMarkets: MarketData[] = [
   { symbol: "GBPUSD", price: "1.26781", change: "-0.05%", trend: "down", regime: "trending" },
 ];
 
-export function MarketScanner({ data = defaultMarkets }: MarketScannerProps) {
+export function MarketScanner({ data = defaultMarkets, onSelectSymbol, selectedSymbol }: MarketScannerProps) {
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
       <h3 className="mb-4 text-lg font-semibold text-white">Market Scanner</h3>
@@ -26,7 +28,10 @@ export function MarketScanner({ data = defaultMarkets }: MarketScannerProps) {
         {data.map((m) => (
           <div
             key={m.symbol}
-            className="flex items-center justify-between border-b border-white/5 pb-2 last:border-0"
+            onClick={() => onSelectSymbol?.(m.symbol)}
+            className={`flex items-center justify-between border-b border-white/5 pb-2 last:border-0 cursor-pointer hover:bg-white/5 transition-colors p-2 rounded-lg ${
+              selectedSymbol === m.symbol ? 'ring-1 ring-blue-500 bg-blue-500/5' : ''
+            }`}
           >
             <div className="flex-1">
               <div className="flex items-center gap-2">

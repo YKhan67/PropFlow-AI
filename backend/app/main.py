@@ -175,6 +175,17 @@ def close_trade(ticket: int):
 def get_market_scanner():
     return engine.get_market_scanner()
 
+@app.get("/market/history/{symbol}")
+def get_market_history(symbol: str, timeframe: str = "H1"):
+    # Map string timeframe to MT5 constant if needed, or use engine's current
+    data = engine.bridge.get_market_data(symbol, count=100)
+    if data is not None:
+        import pandas as pd
+        df = pd.DataFrame.from_records(data)
+        # Convert to list of dicts for frontend
+        return df[['time', 'close']].to_dict('records')
+    return []
+
 @app.get("/account/history")
 def get_equity_history():
     return engine.get_equity_history()
