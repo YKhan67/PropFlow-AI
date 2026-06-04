@@ -66,10 +66,13 @@ class ExecutionEngine:
         logging.info("Background Sync Loop Started.")
         while True:
             try:
-                # 1. Update Market Prices (User Symbols + Institutional Anchors)
-                target_symbols = list(set(self.symbols + ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "USDCHF"]))
+            # 1. Update Market Prices (User Symbols + Institutional Anchors)
+            target_symbols = list(set(
+                self.symbols +
+                ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "USDCHF", "XAUUSD", "XAGUSD"]
+            ))
 
-                for symbol in target_symbols:
+            for symbol in target_symbols:
                     ticker = self.bridge.get_symbol_info(symbol)
                     if ticker:
                         with self.data_lock:

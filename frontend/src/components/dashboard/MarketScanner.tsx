@@ -13,6 +13,7 @@ interface MarketScannerProps {
   data?: MarketData[];
   onSelectSymbol?: (symbol: string) => void;
   selectedSymbol?: string;
+  totalPnL?: number;
 }
 
 const defaultMarkets: MarketData[] = [
@@ -20,10 +21,21 @@ const defaultMarkets: MarketData[] = [
   { symbol: "GBPUSD", price: "1.26781", change: "-0.05%", trend: "down", regime: "trending" },
 ];
 
-export function MarketScanner({ data = defaultMarkets, onSelectSymbol, selectedSymbol }: MarketScannerProps) {
+export function MarketScanner({ data = defaultMarkets, onSelectSymbol, selectedSymbol, totalPnL }: MarketScannerProps) {
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
-      <h3 className="mb-4 text-lg font-semibold text-white">Market Scanner</h3>
+      <div className="mb-4 flex items-center gap-3">
+        <h3 className="text-lg font-semibold text-white">Market Scanner</h3>
+        {totalPnL !== undefined && totalPnL !== 0 && (
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ring-1 ring-inset ${
+            totalPnL >= 0
+              ? "bg-emerald-500/10 text-emerald-400 ring-emerald-500/20"
+              : "bg-rose-500/10 text-rose-400 ring-rose-500/20"
+          }`}>
+            {totalPnL >= 0 ? "+" : ""}{totalPnL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        )}
+      </div>
       <div className="space-y-4">
         {data.map((m) => (
           <div

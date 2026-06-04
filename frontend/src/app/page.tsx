@@ -223,6 +223,7 @@ export default function Dashboard() {
                 }))}
                 onSelectSymbol={setSelectedSymbol}
                 selectedSymbol={selectedSymbol}
+                totalPnL={markets.reduce((sum, m) => sum + (m.pnl || 0), 0)}
               />
               <div className="rounded-xl border border-white/10 bg-gradient-to-br from-emerald-500/20 to-blue-500/20 p-6">
                 <h3 className="font-bold text-white mb-2">Upgrade to Pro</h3>
