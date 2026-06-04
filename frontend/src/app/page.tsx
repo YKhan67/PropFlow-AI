@@ -125,6 +125,7 @@ export default function Dashboard() {
                 {loading ? "Loading system status..." : error ? `Error: ${error}` : status?.engine_running ? `System Active [${
                   status.active_strategy === 'hybrid_hmm' ? 'Hybrid AI' :
                   status.active_strategy === 'quant_engine' ? 'FX-QUANT' :
+                  status.active_strategy === 'gold_scalper' ? 'Gold Scalper' :
                   'Correlation'
                 }]` : "System is idle."}
               </p>

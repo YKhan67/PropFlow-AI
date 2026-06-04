@@ -77,13 +77,16 @@ export default function RiskPage() {
                   <option value="hybrid_hmm">Strategy 1: Hybrid AI (Momentum + HMM)</option>
                   <option value="quant_engine">Strategy 2: FX-QUANT-ENGINE (Stat-Arb & Synthetic)</option>
                   <option value="correlation_reversion">Strategy 3: Correlation Reversion (Pair Basket)</option>
+                  <option value="gold_scalper">Strategy 4: Gold Scalper (RSI + ADX)</option>
                 </select>
                 <p className="text-xs text-white/40 mt-2">
                   {config?.active_strategy === "hybrid_hmm"
                     ? "Uses HMM for regime detection and technical indicators for momentum entry."
                     : config?.active_strategy === "quant_engine"
                     ? "Institutional-grade system using statistical arbitrage, cointegration, and synthetic pair pricing."
-                    : "Strictly correlation-based divergence trading. Opens synchronized two-pair baskets."}
+                    : config?.active_strategy === "correlation_reversion"
+                    ? "Strictly correlation-based divergence trading. Opens synchronized two-pair baskets."
+                    : "Aggressive Gold scalper using RSI, ADX and candle structure for XAUUSD breakouts."}
                 </p>
               </div>
             </div>

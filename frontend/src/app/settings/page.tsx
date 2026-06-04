@@ -12,6 +12,7 @@ export default function SettingsPage() {
   const [symbols, setSymbols] = useState<string>("");
   const [symbolsQuant, setSymbolsQuant] = useState<string>("");
   const [symbolsCorr, setSymbolsCorr] = useState<string>("");
+  const [symbolsGold, setSymbolsGold] = useState<string>("");
   const [timeframe, setTimeframe] = useState<string>("H1");
   const [mt5Login, setMt5Login] = useState<string>("");
   const [mt5Password, setMt5Password] = useState<string>("");
@@ -30,6 +31,7 @@ export default function SettingsPage() {
       setSymbols(config.symbols.join(", "));
       if (config.symbols_quant) setSymbolsQuant(config.symbols_quant.join(", "));
       if (config.symbols_corr) setSymbolsCorr(config.symbols_corr.join(", "));
+      if (config.symbols_gold) setSymbolsGold(config.symbols_gold.join(", "));
       if (config.timeframe) setTimeframe(config.timeframe);
       if (config.mt5) {
         setMt5Login(config.mt5.login || "");
@@ -51,10 +53,12 @@ export default function SettingsPage() {
       const symbolList = symbols.split(",").map(s => s.trim().toUpperCase()).filter(s => s !== "");
       const symbolListQuant = symbolsQuant.split(",").map(s => s.trim().toUpperCase()).filter(s => s !== "");
       const symbolListCorr = symbolsCorr.split(",").map(s => s.trim().toUpperCase()).filter(s => s !== "");
+      const symbolListGold = symbolsGold.split(",").map(s => s.trim().toUpperCase()).filter(s => s !== "");
       await apiService.updateConfig({
         symbols: symbolList,
         symbols_quant: symbolListQuant,
         symbols_corr: symbolListCorr,
+        symbols_gold: symbolListGold,
         timeframe: timeframe,
         mt5: {
           login: mt5Login,
@@ -116,16 +120,27 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm text-amber-400/80 mb-1 font-medium">Correlation Reversion Symbols (Strategy 3)</label>
-                  <input
-                    type="text"
-                    value={symbolsCorr}
-                    onChange={(e) => setSymbolsCorr(e.target.value)}
-                    placeholder="EURUSD, GBPUSD, USDCHF, USDJPY, AUDUSD, NZDUSD, USDCAD"
-                    className="w-full bg-black border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-amber-500"
-                  />
-                  <p className="text-xs text-white/40 mt-2">Correlation requires at least 2 highly correlated symbols to be monitored.</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm text-amber-400/80 mb-1 font-medium">Correlation Symbols (Strategy 3)</label>
+                    <input
+                      type="text"
+                      value={symbolsCorr}
+                      onChange={(e) => setSymbolsCorr(e.target.value)}
+                      placeholder="EURUSD, GBPUSD"
+                      className="w-full bg-black border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-yellow-400/80 mb-1 font-medium">Gold Scalper Symbols (Strategy 4)</label>
+                    <input
+                      type="text"
+                      value={symbolsGold}
+                      onChange={(e) => setSymbolsGold(e.target.value)}
+                      placeholder="XAUUSD"
+                      className="w-full bg-black border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-yellow-500"
+                    />
+                  </div>
                 </div>
 
                 <div>

@@ -280,7 +280,7 @@ class HybridDecisionEngine:
         # 1. Regime detection using symbol-specific model
         detector = self.detectors[symbol]
         state_ids, state_labels = detector.predict(ohlcv)
-        regime_probs = self.regime_detector.get_regime_probs(ohlcv)
+        regime_probs = detector.get_regime_probs(ohlcv)
 
         current_regime = state_labels[bar_index] if bar_index < len(state_labels) else state_labels[-1]
         self._last_regime = current_regime

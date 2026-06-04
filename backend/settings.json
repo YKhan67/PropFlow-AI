@@ -5,7 +5,7 @@
         "max_position_size": 1,
         "account_balance": 340818.1,
         "scale_down_excess": false,
-        "max_active_trades": 60,
+        "max_active_trades": 70,
         "global_take_profit": 300,
         "min_time_between_trades": 1,
         "active_strategy": "hybrid_hmm",
@@ -27,12 +27,10 @@
     ],
     "symbols_corr": [
         "EURUSD",
-        "GBPUSD",
-        "USDCHF",
-        "USDJPY",
-        "AUDUSD",
-        "NZDUSD",
         "USDCAD"
+    ],
+    "symbols_gold": [
+        "XAUUSD"
     ],
     "timeframe": "M30",
     "mt5": {

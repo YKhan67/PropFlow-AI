@@ -77,7 +77,7 @@ export interface RiskConfig {
   max_active_trades: number;
   global_take_profit: number;
   min_time_between_trades: number;
-  active_strategy: "hybrid_hmm" | "quant_engine" | "correlation_reversion";
+  active_strategy: "hybrid_hmm" | "quant_engine" | "correlation_reversion" | "gold_scalper";
   quant_zscore_entry?: number;
   quant_zscore_exit?: number;
 }

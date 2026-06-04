@@ -40,6 +40,7 @@ def load_settings():
         'symbols': ["EURUSD", "GBPUSD"],
         'symbols_quant': ["EURUSD", "GBPUSD", "USDJPY"],
         'symbols_corr': ["EURUSD", "GBPUSD", "USDCHF", "USDJPY", "AUDUSD", "NZDUSD", "USDCAD"],
+        'symbols_gold': ["XAUUSD"],
         'timeframe': "H1"
     }
 
@@ -57,8 +58,10 @@ if active_strategy == 'hybrid_hmm':
     initial_symbols = config_data.get('symbols', [])
 elif active_strategy == 'quant_engine':
     initial_symbols = config_data.get('symbols_quant', [])
-else:
+elif active_strategy == 'correlation_reversion':
     initial_symbols = config_data.get('symbols_corr', [])
+else:
+    initial_symbols = config_data.get('symbols_gold', [])
 
 engine = ExecutionEngine(
     initial_symbols,
@@ -99,8 +102,10 @@ def update_config(new_config: dict):
             engine.symbols = config_data['symbols']
         elif config_data['risk'].get('active_strategy') == 'quant_engine':
             engine.symbols = config_data.get('symbols_quant', [])
-        else:
+        elif config_data['risk'].get('active_strategy') == 'correlation_reversion':
             engine.symbols = config_data.get('symbols_corr', [])
+        else:
+            engine.symbols = config_data.get('symbols_gold', [])
     if 'symbols' in new_config:
         config_data['symbols'] = new_config['symbols']
         # engine.symbols is used as the active trading list
@@ -114,6 +119,10 @@ def update_config(new_config: dict):
         config_data['symbols_corr'] = new_config['symbols_corr']
         if config_data['risk'].get('active_strategy') == 'correlation_reversion':
             engine.symbols = config_data['symbols_corr']
+    if 'symbols_gold' in new_config:
+        config_data['symbols_gold'] = new_config['symbols_gold']
+        if config_data['risk'].get('active_strategy') == 'gold_scalper':
+            engine.symbols = config_data['symbols_gold']
     if 'timeframe' in new_config:
         config_data['timeframe'] = new_config['timeframe']
         engine.set_timeframe(config_data['timeframe'])

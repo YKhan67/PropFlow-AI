@@ -10,6 +10,7 @@ try:
     from ai.engine.hybrid_engine import HybridDecisionEngine, SignalType as HybridSignalType
     from ai.engine.quant_engine import FXQuantEngine, SignalType as QuantSignalType
     from ai.engine.correlation_engine import CorrelationStrategy
+    from ai.engine.gold_scalper import GoldScalperStrategy, SignalType as GoldSignalType
     AI_AVAILABLE = True
 except ImportError:
     AI_AVAILABLE = False
@@ -55,10 +56,12 @@ class ExecutionEngine:
 
             self.ai_quant = FXQuantEngine(risk_config)
             self.ai_corr = CorrelationStrategy(risk_config)
+            self.ai_gold = GoldScalperStrategy(risk_config)
         else:
             self.ai_hmm = None
             self.ai_quant = None
             self.ai_corr = None
+            self.ai_gold = None
 
         # Start the background data synchronizer
         self.sync_thread = threading.Thread(target=self._data_sync_loop, daemon=True)
@@ -148,6 +151,8 @@ class ExecutionEngine:
                 self._evaluate_hmm_strategy(symbol, data)
             elif active_strategy == "quant_engine" and self.ai_quant:
                 self._evaluate_quant_strategy(symbol, data)
+            elif active_strategy == "gold_scalper" and self.ai_gold:
+                self._evaluate_gold_strategy(symbol, data)
             elif active_strategy == "correlation_reversion" and self.ai_corr:
                 # We'll evaluate all symbols at once for correlation in the main loop instead
                 pass
@@ -269,6 +274,40 @@ class ExecutionEngine:
         except Exception as e:
             logging.error(f"Quant Error [{symbol}]: {e}")
 
+    def _evaluate_gold_strategy(self, symbol, data):
+        try:
+            df = pd.DataFrame.from_records(data)
+            decision = self.ai_gold.evaluate(symbol, df)
+
+            with self.data_lock:
+                self.symbol_regimes[symbol] = decision.regime
+
+            # EXIT LOGIC: Current Close < Previous Low
+            # Check if we have active trades for this symbol to apply exit logic
+            active_gold_trades = [t for t in self.active_trades if t['symbol'] == symbol]
+            if active_gold_trades:
+                curr_close = df['close'].iloc[-1]
+                prev_low = df['low'].iloc[-2]
+                if curr_close < prev_low:
+                    logging.info(f"!!! [{symbol}] GOLD EXIT TRIGGERED: Close {curr_close} < PrevLow {prev_low} !!!")
+                    for t in active_gold_trades:
+                        self.bridge.close_position(t['id'])
+                    return # Exit after closing
+
+            if decision.signal == GoldSignalType.BUY:
+                logging.info(f"[{symbol}] GOLD Strategy: {decision.signal.value.upper()} Reason: {decision.reason}")
+                max_pos = self.risk_manager.config.get('max_position_size', 0.1)
+                signal = {
+                    'symbol': symbol,
+                    'type': 0, # BUY
+                    'volume': float(max_pos)
+                }
+                logging.info(f"!!! GOLD SIGNAL APPROVED: {symbol} BUY !!!")
+                self._execute_signal(signal)
+
+        except Exception as e:
+            logging.error(f"Gold Strategy Error [{symbol}]: {e}")
+
     def _execute_signal(self, signal):
         status, validated_signal = self.risk_manager.check_order(
             signal, active_trades_count=len(self.active_trades)
@@ -347,6 +386,7 @@ class ExecutionEngine:
         active = self.risk_manager.config.get('active_strategy', 'hybrid_hmm')
         if active == "hybrid_hmm": return "Hybrid AI"
         if active == "quant_engine": return "FX-QUANT"
+        if active == "gold_scalper": return "Gold Scalper"
         return "Correlation Reversion"
 
     def generate_dummy_signal(self, symbol):
