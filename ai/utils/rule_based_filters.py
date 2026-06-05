@@ -64,7 +64,7 @@ class DrawdownFilterConfig:
     max_position_size_pct: float = 2.0
     daily_loss_soft_limit_pct: float = 3.0  # warning threshold
     max_spread_pips: float = 2.0
-    min_time_between_trades_minutes: int = 5
+    min_time_between_trades_seconds: int = 300
 
 
 import time
@@ -109,7 +109,7 @@ class SignalGate:
         # 1. Per-Symbol Cooldown
         now = time.time()
         last_trade = self._last_trade_times.get(symbol, 0)
-        cooldown_seconds = self.dd_config.min_time_between_trades_minutes * 60
+        cooldown_seconds = self.dd_config.min_time_between_trades_seconds
         if now - last_trade < cooldown_seconds:
             return FilterDecision.DELAY, f"Cooldown active ({int(cooldown_seconds - (now - last_trade))}s left)"
 

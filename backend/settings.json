@@ -5,16 +5,15 @@
         "max_position_size": 1,
         "account_balance": 340818.1,
         "scale_down_excess": false,
-        "max_active_trades": 100,
+        "max_active_trades": 50,
         "global_take_profit": 300,
-        "min_time_between_trades": 1,
+        "min_time_between_trades": 0,
         "active_strategy": "hybrid_hmm",
         "quant_zscore_entry": 1.8,
         "quant_zscore_exit": 0.7
     },
     "symbols": [
-        "XAUUSD",
-        "USDJPY"
+        "XAUUSD"
     ],
     "symbols_quant": [
         "EURUSD",

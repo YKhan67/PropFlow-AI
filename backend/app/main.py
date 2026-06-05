@@ -93,7 +93,7 @@ def update_config(new_config: dict):
 
         # Update AI Engines if they exist
         if engine.ai_hmm:
-            engine.ai_hmm.signal_gate.dd_config.min_time_between_trades_minutes = config_data['risk'].get('min_time_between_trades', 5)
+            engine.ai_hmm.signal_gate.dd_config.min_time_between_trades_seconds = config_data['risk'].get('min_time_between_trades', 300)
             engine.ai_hmm.signal_gate.dd_config.daily_drawdown_limit_pct = config_data['risk'].get('max_daily_drawdown', 0.05) * 100
             engine.ai_hmm.signal_gate.dd_config.total_drawdown_limit_pct = config_data['risk'].get('max_total_drawdown', 0.10) * 100
         if engine.ai_quant:

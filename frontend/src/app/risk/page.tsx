@@ -8,6 +8,7 @@ import { Shield, AlertTriangle, Scale, Wallet, Save } from "lucide-react";
 
 export default function RiskPage() {
   const [config, setConfig] = useState<RiskConfig | null>(null);
+  const [cooldownStr, setCooldownStr] = useState("00:00");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -20,6 +21,7 @@ export default function RiskPage() {
     try {
       const fullConfig = await apiService.getConfig();
       setConfig(fullConfig.risk);
+      setCooldownStr(formatSecondsToMMSS(fullConfig.risk.min_time_between_trades || 0));
     } catch (error) {
       console.error("Failed to load risk config", error);
     } finally {
@@ -34,6 +36,7 @@ export default function RiskPage() {
     setMessage("");
     try {
       await apiService.updateConfig({ risk: config });
+      setCooldownStr(formatSecondsToMMSS(config.min_time_between_trades || 0));
       setMessage("Risk parameters updated successfully!");
       setTimeout(() => setMessage(""), 3000);
     } catch (error) {
@@ -46,6 +49,20 @@ export default function RiskPage() {
   const updateField = (field: keyof RiskConfig, value: string | number | boolean) => {
     if (!config) return;
     setConfig({ ...config, [field]: value });
+  };
+
+  const formatSecondsToMMSS = (totalSeconds: number) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const parseMMSSToSeconds = (mmss: string) => {
+    if (!mmss.includes(':')) return parseInt(mmss) || 0;
+    const parts = mmss.split(':');
+    const mins = parseInt(parts[0]) || 0;
+    const secs = parseInt(parts[1]) || 0;
+    return (mins * 60) + secs;
   };
 
   if (loading) return <div className="p-8 text-white">Loading...</div>;
@@ -195,15 +212,31 @@ export default function RiskPage() {
                     <p className="text-xs text-white/40 mt-2">Automatically close all trades when total unrealized profit reaches this amount. Set to 0 to disable.</p>
                   </div>
                   <div>
-                    <label className="block text-sm text-white/60 mb-1">Min Time Between Trades (Mins)</label>
+                    <label className="block text-sm text-white/60 mb-1">Min Time Between Trades (MM:SS)</label>
                     <input
-                      type="number"
-                      step="1"
-                      value={config?.min_time_between_trades || 0}
-                      onChange={(e) => updateField("min_time_between_trades", parseInt(e.target.value))}
+                      type="text"
+                      placeholder="05:00"
+                      value={cooldownStr}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/[^0-9:]/g, ''); // Only numbers and colons
+                        setCooldownStr(val);
+                        // Update config immediately if valid format MM:SS
+                        if (/^\d{1,2}:\d{2}$/.test(val)) {
+                          const seconds = parseMMSSToSeconds(val);
+                          updateField("min_time_between_trades", seconds);
+                        }
+                      }}
+                      onBlur={() => {
+                        // Cleanup formatting on blur (e.g. 5:0 -> 05:00)
+                        if (config) {
+                          setCooldownStr(formatSecondsToMMSS(config.min_time_between_trades || 0));
+                        }
+                      }}
                       className="w-full bg-black border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-amber-500"
                     />
-                    <p className="text-xs text-white/40 mt-2">Safety cooldown period per symbol to prevent rapid over-trading.</p>
+                    <p className="text-[10px] text-white/40 mt-2">
+                      Current delay: <span className="text-amber-400">{config?.min_time_between_trades || 0} seconds</span>
+                    </p>
                   </div>
                 </div>
               </div>

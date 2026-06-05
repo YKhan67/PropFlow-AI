@@ -22,7 +22,8 @@ class RiskManager:
         
         # Current status
         self.current_equity = self.starting_balance
-        
+        self._last_trade_times = {} # symbol -> timestamp
+
         logging.info(f"Risk Manager initialized. Starting Balance: {self.starting_balance}")
 
     def update_equity(self, equity):
@@ -58,7 +59,19 @@ class RiskManager:
         """
         The final gate for all orders.
         """
-        # 1. Max Active Trades Check
+        symbol = order_request['symbol']
+        import time
+
+        # 1. Per-Symbol Cooldown Check (MM:SS supported)
+        min_cooldown = self.config.get('min_time_between_trades', 0)
+        if min_cooldown > 0:
+            last_time = self._last_trade_times.get(symbol, 0)
+            if time.time() - last_time < min_cooldown:
+                remaining = int(min_cooldown - (time.time() - last_time))
+                logging.warning(f"Risk Reject: {symbol} is in cooldown ({remaining}s remaining)")
+                return 'rejected', None
+
+        # 2. Max Active Trades Check
         max_trades = self.config.get('max_active_trades', 5)
         if active_trades_count >= max_trades:
             logging.warning(f"Risk Reject: Max active trades limit reached ({max_trades})")
@@ -90,6 +103,11 @@ class RiskManager:
         # 3. All checks passed
         logging.info(f"Risk Pass: Order for {order_request['symbol']} approved.")
         return 'approved', order_request
+
+    def register_trade(self, symbol):
+        """Register that a trade was executed to start cooldown."""
+        import time
+        self._last_trade_times[symbol] = time.time()
 
     def get_status(self):
         return {

@@ -50,7 +50,7 @@ class ExecutionEngine:
             self.ai_hmm = HybridDecisionEngine()
 
             # Sync initial settings for HMM
-            self.ai_hmm.signal_gate.dd_config.min_time_between_trades_minutes = risk_config.get('min_time_between_trades', 5)
+            self.ai_hmm.signal_gate.dd_config.min_time_between_trades_seconds = risk_config.get('min_time_between_trades', 300)
             self.ai_hmm.signal_gate.dd_config.daily_drawdown_limit_pct = risk_config.get('max_daily_drawdown', 0.05) * 100
             self.ai_hmm.signal_gate.dd_config.total_drawdown_limit_pct = risk_config.get('max_total_drawdown', 0.10) * 100
 
@@ -68,78 +68,69 @@ class ExecutionEngine:
         self.sync_thread.start()
 
     def _data_sync_loop(self):
-        """Sequential but efficient loop for MT5 data."""
-        logging.info("Background Sync Loop Started.")
+        """High-speed monitor for Profit Targets and Market Data."""
+        logging.info("Ultra-High Speed Monitoring Activated (0.1s check).")
+
+        last_slow_update = 0
+
         while True:
             try:
-                # 1. Update Market Prices (User Symbols + Institutional Anchors)
-                target_symbols = list(set(
-                    self.symbols +
-                    ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "USDCHF", "XAUUSD", "XAGUSD"]
-                ))
-
-                for symbol in target_symbols:
-                    ticker = self.bridge.get_symbol_info(symbol)
-                    if ticker:
-                        with self.data_lock:
-                            self.market_scanner[symbol] = ticker
-
-                            # 1.1 Update 5s Price Buffer for high-res charts
-                            now = time.time()
-                            if now - getattr(self, '_last_5s_update', 0) >= 5:
-                                if symbol not in self.price_history_5s:
-                                    self.price_history_5s[symbol] = []
-
-                                self.price_history_5s[symbol].append({
-                                    "time": int(now),
-                                    "close": ticker['bid']
-                                })
-                                # Limit to last 100 points
-                                if len(self.price_history_5s[symbol]) > 100:
-                                    self.price_history_5s[symbol].pop(0)
-
-                # Reset global timer after iterating all symbols
-                if time.time() - getattr(self, '_last_5s_update', 0) >= 5:
-                    self._last_5s_update = time.time()
-
-                # 2. Update Account & Trades (Fast)
+                # --- PHASE 1: ULTRA-FAST (Every 0.1s - 0.2s) ---
+                # Check Account PnL for target hit - HIGH PRIORITY
                 self.active_trades = self.bridge.get_open_positions()
                 self.account_cache = self.bridge.get_account_info()
-
-                # 3. Update History & Risk
                 current_pnl = self.calculate_total_pnl()
-                new_equity = self.account_cache.get("equity", self.risk_manager.starting_balance)
-                self.risk_manager.update_equity(new_equity)
 
-                self.equity_history.append({"time": time.time(), "equity": new_equity})
-                if len(self.equity_history) > 100:
-                    self.equity_history.pop(0)
-
-                # 4. Strategy Evaluation (One symbol per loop to prevent lag)
-                if self.running and self.symbols:
-                    # Safety check: ensure index is within range of the current symbols list
-                    if self._current_symbol_idx >= len(self.symbols):
-                        self._current_symbol_idx = 0
-
-                    target_symbol = self.symbols[self._current_symbol_idx]
-                    self._evaluate_symbol_strategy(target_symbol)
-
-                    # Also evaluate group-based strategies (Strategy 3)
-                    self._evaluate_all_symbols_strategy()
-
-                    self._current_symbol_idx = (self._current_symbol_idx + 1) % len(self.symbols)
-
-                # 5. Check Basket Exit
                 if self.running:
                     target_profit = self.risk_manager.config.get('global_take_profit', 0)
                     if target_profit > 0 and current_pnl >= target_profit:
-                        logging.info(f"Global Profit Target Reached (${current_pnl:.2f}).")
+                        logging.info(f"!!! TARGET HIT: ${current_pnl:.2f} >= ${target_profit:.2f}. Executing Instant Close All !!!")
                         self.close_all_trades()
+                        # Safety sleep after closing to avoid double-triggers
+                        time.sleep(1)
+                        continue
+
+                # --- PHASE 2: NORMAL SPEED (Every 1s) ---
+                now = time.time()
+                if now - last_slow_update >= 1.0:
+                    last_slow_update = now
+
+                    # 1. Update Market Prices for active symbols
+                    target_symbols = list(set(self.symbols + ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "USDCHF", "XAUUSD", "XAGUSD"]))
+                    for symbol in target_symbols:
+                        ticker = self.bridge.get_symbol_info(symbol)
+                        if ticker:
+                            with self.data_lock:
+                                self.market_scanner[symbol] = ticker
+
+                                # High-res 5s Chart Buffer
+                                if now - getattr(self, '_last_5s_update', 0) >= 5:
+                                    if symbol not in self.price_history_5s: self.price_history_5s[symbol] = []
+                                    self.price_history_5s[symbol].append({"time": int(now), "close": ticker['bid']})
+                                    if len(self.price_history_5s[symbol]) > 100: self.price_history_5s[symbol].pop(0)
+
+                    if now - getattr(self, '_last_5s_update', 0) >= 5:
+                        self._last_5s_update = now
+
+                    # 2. Update Risk & History
+                    new_equity = self.account_cache.get("equity", self.risk_manager.starting_balance)
+                    self.risk_manager.update_equity(new_equity)
+                    self.equity_history.append({"time": now, "equity": new_equity})
+                    if len(self.equity_history) > 100: self.equity_history.pop(0)
+
+                    # 3. Strategy Evaluation
+                    if self.running and self.symbols:
+                        if self._current_symbol_idx >= len(self.symbols): self._current_symbol_idx = 0
+                        target_symbol = self.symbols[self._current_symbol_idx]
+                        self._evaluate_symbol_strategy(target_symbol)
+                        self._evaluate_all_symbols_strategy()
+                        self._current_symbol_idx = (self._current_symbol_idx + 1) % len(self.symbols)
 
             except Exception as e:
                 logging.error(f"Sync Loop Error: {e}")
 
-            time.sleep(1)
+            # Tight loop sleep for tick-level responsiveness
+            time.sleep(0.1)
 
     def _evaluate_symbol_strategy(self, symbol):
         """Strategy logic routing."""
@@ -313,11 +304,14 @@ class ExecutionEngine:
             signal, active_trades_count=len(self.active_trades)
         )
         if status in ['approved', 'modified']:
-            self.bridge.place_order(
+            result = self.bridge.place_order(
                 symbol=validated_signal['symbol'],
                 order_type=validated_signal['type'],
                 volume=validated_signal['volume']
             )
+            # 10009 is MT5 SUCCESS code
+            if result and result.get('retcode') == 10009:
+                self.risk_manager.register_trade(validated_signal['symbol'])
 
     def start(self):
         logging.info("Trading Engine Activated.")
