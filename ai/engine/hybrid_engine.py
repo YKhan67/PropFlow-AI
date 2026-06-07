@@ -224,11 +224,11 @@ class HybridDecisionEngine:
 
         # Regime-adaptive decision
         if regime == "trending":
-            # Trend-following: stronger weight on longer momentum
-            if roc20 > regime_params.trend_threshold and latest_close > sma20:
+            # Trend-following: balanced momentum thresholds
+            if roc20 > regime_params.trend_threshold * 1.1 and latest_close > sma20:
                 confidence = min(1.0, abs(roc20) / 1.0)
                 return SignalType.LONG, confidence
-            elif roc20 < -regime_params.trend_threshold and latest_close < sma20:
+            elif roc20 < -regime_params.trend_threshold * 0.9 and latest_close < sma20:
                 confidence = min(1.0, abs(roc20) / 1.0)
                 return SignalType.SHORT, confidence
             else:
