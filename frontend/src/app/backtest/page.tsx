@@ -38,46 +38,55 @@ export default function BacktestPage() {
       period: params.date_from + " to " + params.date_to,
       strategy: params.strategy
     });
-    setPlaybackIdx(0);
 
     let allTrades: any[] = [];
     let combinedUSD = 0;
-    let mainOHLCV: any[] = [];
+
+    // 1. CHUNKED REAL-TIME SIMULATION
+    // Instead of one big request, we request 3-day blocks to show live progress
+    const start = new Date(params.date_from);
+    const end = new Date(params.date_to);
 
     try {
-      for (const sym of symbolList) {
-        setCurrentProcessing(sym);
-        const data = await apiService.runBacktest({
-          ...params,
-          symbol: sym,
-          date_from: new Date(params.date_from).toISOString(),
-          date_to: new Date(params.date_to).toISOString()
-        });
+      for (const symbol of symbolList) {
+        setCurrentProcessing(symbol);
+        let currentBlockStart = new Date(start);
 
-        if (data.error) {
-          console.warn(`Skipping ${sym}: ${data.error}`);
-          continue;
+        while (currentBlockStart < end) {
+          let currentBlockEnd = new Date(currentBlockStart);
+          currentBlockEnd.setDate(currentBlockEnd.getDate() + 3); // 3-day chunks
+          if (currentBlockEnd > end) currentBlockEnd = end;
+
+          const data = await apiService.runBacktest({
+            ...params,
+            symbol: symbol,
+            date_from: currentBlockStart.toISOString(),
+            date_to: currentBlockEnd.toISOString()
+          });
+
+          if (!data.error && data.trades) {
+            allTrades = [...allTrades, ...data.trades];
+            combinedUSD += data.total_usd || 0;
+
+            // Sort by time
+            allTrades.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+
+            // UPDATE UI IMMEDIATELY (Simulating real-time discovery)
+            setResult((prev: any) => ({
+              ...prev,
+              total_trades: allTrades.length,
+              total_usd: combinedUSD,
+              trades: [...allTrades].reverse(), // Show newest first in log
+              win_rate: allTrades.length > 0 ? (allTrades.filter(t => t.usd > 0).length / allTrades.length * 100).toFixed(1) : "0.0"
+            }));
+          }
+
+          currentBlockStart = currentBlockEnd;
         }
-
-        allTrades = [...allTrades, ...(data.trades || [])];
-        combinedUSD += data.total_usd || 0;
-        if (mainOHLCV.length === 0) mainOHLCV = data.ohlcv || [];
-
-        // Dynamic update while processing
-        setResult((prev: any) => ({
-          ...prev,
-          total_trades: allTrades.length,
-          total_usd: combinedUSD,
-          trades: allTrades.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()),
-          ohlcv: mainOHLCV,
-          win_rate: allTrades.length > 0 ? (allTrades.filter(t => t.usd > 0).length / allTrades.length * 100).toFixed(1) : "0.0"
-        }));
       }
-
-      setPlaybackIdx(100);
     } catch (err) {
       console.error(err);
-      alert("Backtest failed. Ensure MT5 is connected.");
+      alert("Backtest failed. Check connection to MetaTrader 5.");
     } finally {
       setLoading(false);
       setCurrentProcessing("");
@@ -216,37 +225,41 @@ export default function BacktestPage() {
             </div>
 
             {/* Results Panel */}
-            <div className="lg:col-span-3 space-y-8">
+            <div className="lg:col-span-3 space-y-4">
               {!result && !loading && (
-                <div className="h-full min-h-[400px] flex flex-col items-center justify-center rounded-xl border border-dashed border-white/10 text-white/20">
-                  <Activity className="h-12 w-12 mb-4" />
-                  <p>Configure parameters and click 'Run Backtest' to see historical performance.</p>
+                <div className="h-[300px] flex flex-col items-center justify-center rounded-xl border border-dashed border-white/10 text-white/20">
+                  <Activity className="h-10 w-10 mb-4" />
+                  <p className="text-sm font-medium uppercase tracking-widest opacity-40">Ready for Simulation</p>
                 </div>
               )}
 
-              {(loading || (result && playbackIdx < 100)) && (
-                <div className="h-full min-h-[400px] flex flex-col items-center justify-center rounded-xl border border-white/10 bg-white/5">
-                  <Activity className="h-12 w-12 mb-4 text-emerald-500 animate-pulse" />
-                  <p className="text-white/40 font-medium text-lg">
-                    {currentProcessing ? `AI Analyzing ${currentProcessing}...` : "Reliving Market History..."}
-                  </p>
-                  <p className="text-white/20 text-sm mt-2">Streaming multi-symbol data to dashboard.</p>
+              {loading && (
+                <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-lg py-2 px-4 flex items-center justify-between animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <div className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-ping" />
+                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">
+                      Crunching Portfolio: {currentProcessing || 'Data Stream'}...
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-white/20 font-mono tracking-tighter">SECURE CLOUD BACKTEST</span>
                 </div>
               )}
 
-              {result && !loading && (
+              {result && (
                 <>
                   {/* Summary Cards Row 1 */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-6 relative overflow-hidden">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-white/40 uppercase font-bold">Progress</span>
-                        <Clock className="h-4 w-4 text-indigo-400" />
+                        <span className="text-xs text-white/40 uppercase font-bold">Status</span>
+                        {loading ? <Clock className="h-4 w-4 text-amber-500 animate-spin" /> : <AlertCircle className="h-4 w-4 text-emerald-500" />}
                       </div>
-                      <p className="text-2xl font-bold">100%</p>
-                      <div className="w-full bg-emerald-500/20 h-1 rounded-full mt-2">
-                        <div className="bg-emerald-500 h-full w-full" />
-                      </div>
+                      <p className="text-2xl font-bold">{loading ? "PROCESSING" : "COMPLETE"}</p>
+                      {loading && (
+                         <div className="absolute bottom-0 left-0 h-1 bg-amber-500/30 w-full">
+                            <div className="h-full bg-amber-500 animate-[loading_2s_ease-in-out_infinite]" style={{width: '30%'}} />
+                         </div>
+                      )}
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
                       <div className="flex items-center justify-between mb-2">
@@ -263,6 +276,7 @@ export default function BacktestPage() {
                       <p className={`text-2xl font-bold ${result.total_usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         ${result.total_usd.toLocaleString(undefined, {minimumFractionDigits: 2})}
                       </p>
+                      {currentProcessing && <p className="text-[10px] text-amber-500 animate-pulse mt-1">Calculating {currentProcessing}...</p>}
                     </div>
                     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
                       <div className="flex items-center justify-between mb-2">
@@ -309,16 +323,12 @@ export default function BacktestPage() {
                     </div>
                   </div>
 
-                  {/* Trade Log - Scrollable Fix */}
-                  <div className="rounded-xl border border-white/10 bg-white/5 overflow-hidden flex flex-col">
-                    <div className="p-6 border-b border-white/10 flex items-center justify-between">
-                      <h3 className="font-bold text-white uppercase text-xs tracking-widest flex items-center gap-2">
-                        <div className="h-2 w-2 rounded-full bg-emerald-500" />
-                        Full Execution Log
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-6 overflow-hidden">
+                      <h3 className="font-bold text-white uppercase text-xs tracking-widest flex items-center gap-2 mb-4">
+                        <div className={`h-2 w-2 rounded-full ${loading ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
+                        {loading ? 'Real-time Simulation' : 'Full Execution Log'}
                       </h3>
-                      <span className="text-xs text-white/40">Chronological history for entire portfolio</span>
-                    </div>
-                    <div className="max-h-[500px] overflow-y-auto">
+                      <div className="max-h-[500px] overflow-y-auto pr-2">
                       <table className="w-full text-left border-collapse">
                         <thead className="text-xs text-white/40 uppercase bg-white/[0.02] sticky top-0 backdrop-blur-md">
                           <tr>

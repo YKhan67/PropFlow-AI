@@ -1,7 +1,7 @@
 import logging
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from .backtest.hmm_runner import run_hmm_backtest
 from .backtest.quant_runner import run_quant_backtest
 from .backtest.gold_runner import run_gold_backtest
@@ -24,14 +24,26 @@ class BacktestEngine:
 
         for symbol in symbols:
             try:
-                logging.info(f"[BACKTEST] Fetching data for {symbol}...")
-                rates = self.bridge.get_market_data_range(symbol, mt5_tf, date_from, date_to)
+                # 1. EXPANDED LOOKBACK (CRITICAL FOR REALISM)
+                # To ensure Strategy 1 (HMM) and indicators have enough data to be accurate,
+                # we fetch an additional 15 days BEFORE the start date for 'warm-up'
+                adjusted_start = date_from - timedelta(days=15)
+
+                logging.info(f"[BACKTEST] Pipeline: {symbol} from {date_from} (Pre-load from {adjusted_start.date()})")
+
+                rates = self.bridge.get_market_data_range(symbol, mt5_tf, adjusted_start, date_to)
                 if rates is None or len(rates) < 150:
-                    logging.warning(f"[BACKTEST] Skipping {symbol}: Insufficient data.")
+                    logging.warning(f"[BACKTEST] Skipping {symbol}: Data insufficient.")
                     continue
 
-                df = pd.DataFrame.from_records(rates)
+                # Data structured format check
+                df = pd.DataFrame(rates)
+                if 'close' not in df.columns:
+                    df.columns = ['time', 'open', 'high', 'low', 'close', 'tick_volume', 'spread', 'real_volume'][:len(df.columns)]
+
+                df = df.drop_duplicates(subset=['time']).sort_values('time').reset_index(drop=True)
                 df['time'] = pd.to_datetime(df['time'], unit='s')
+                for c in ['open', 'high', 'low', 'close']: df[c] = df[c].astype(float)
 
                 # Keep first symbol's OHLCV for chart playback
                 if not all_ohlcv:
@@ -45,16 +57,23 @@ class BacktestEngine:
                     symbol_trades = run_quant_backtest(symbol, df, lot_size, profit_target, risk_config)
                 elif strategy_name == "gold_scalper":
                     symbol_trades = run_gold_backtest(symbol, df, lot_size, profit_target)
-                elif strategy_name == "correlation_reversion":
-                    return run_correlation_backtest(symbol, df)
                 else:
-                    logging.error(f"Unknown strategy: {strategy_name}")
                     continue
 
-                combined_trades.extend(symbol_trades)
+                # FILTER: Only keep trades that opened within the requested range
+                # (Prevents trades from the 15-day 'warm-up' period appearing)
+                valid_trades = [t for t in symbol_trades if t['open_time'] >= date_from]
+
+                if valid_trades:
+                    logging.info(f"[BACKTEST] {symbol}: Found {len(valid_trades)} trades.")
+                    combined_trades.extend(valid_trades)
+                else:
+                    logging.info(f"[BACKTEST] {symbol}: 0 trades generated.")
 
             except Exception as e:
-                logging.error(f"[BACKTEST] Dispatch error for {symbol}: {e}")
+                import traceback
+                logging.error(f"[BACKTEST] Critical Dispatch error for {symbol}: {e}")
+                logging.error(traceback.format_exc())
                 continue
 
         # 3. Finalize Stats
@@ -77,11 +96,12 @@ class BacktestEngine:
             "ohlcv": all_ohlcv,
             "trades": [{
                 "time": t['open_time'].strftime("%Y-%m-%d %H:%M"),
+                "symbol": t['symbol'],
                 "type": f"{t['symbol']} {t['type'].upper()}",
-                "entry": round(t['open_price'], 5),
-                "exit": round(t['close_price'], 5),
-                "usd": round(t['pnl_usd'], 2),
-                "open_idx": t['open_idx'],
-                "close_idx": t['close_idx']
+                "entry": round(float(t['open_price']), 5),
+                "exit": round(float(t['close_price']), 5),
+                "usd": round(float(t['pnl_usd']), 2),
+                "open_idx": t.get('open_idx', 0),
+                "close_idx": t.get('close_idx', 0)
             } for t in combined_trades]
         }

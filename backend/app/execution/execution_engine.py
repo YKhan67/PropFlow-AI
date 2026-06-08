@@ -37,8 +37,8 @@ class ExecutionEngine:
         self.tf_map = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 16385, "H4": 16388, "D1": 16408}
         self.mt5_timeframe = self.tf_map.get(timeframe, 16385)
 
-        # Initialize bridge
-        self.bridge.initialize()
+        self._stop_event = threading.Event()
+        self._initialized = False
 
         # Initialize Modular Strategy Handlers
         self.hmm_handler = HMMHandler(self.risk_manager)
@@ -52,36 +52,54 @@ class ExecutionEngine:
 
     def _data_sync_loop(self):
         """High-speed monitor for Profit Targets and Market Data."""
-        logging.info("Ultra-High Speed Monitoring Activated (0.1s check).")
+        logging.info("Ultra-High Speed Monitoring Activated.")
         last_slow_update = 0
 
-        while True:
-            try:
-                # --- PHASE 1: ULTRA-FAST (Account PnL & Targets) ---
-                self.active_trades = self.bridge.get_open_positions()
-                self.account_cache = self.bridge.get_account_info()
-                current_pnl = self.calculate_total_pnl()
+        while not self._stop_event.is_set():
+            # Periodic initialization check if bridge is not connected
+            if not self._initialized:
+                logging.info("Attempting MT5 Bridge initialization...")
+                if self.bridge.initialize():
+                    self._initialized = True
+                    logging.info("MT5 Bridge initialized successfully.")
+                else:
+                    logging.warning(f"MT5 Bridge initialization failed: {self.bridge.last_error}. Retrying in 5s...")
+                    # Interruptible sleep
+                    for _ in range(50):
+                        if self._stop_event.is_set(): break
+                        time.sleep(0.1)
+                    continue
 
-                if self.running:
+            try:
+                # --- PHASE 1: FAST (PnL check only if trades are active) ---
+                if self.active_trades and self.running:
+                    current_pnl = self.calculate_total_pnl()
                     target_profit = self.risk_manager.config.get('global_take_profit', 0)
                     if target_profit > 0 and current_pnl >= target_profit:
                         logging.info(f"!!! TARGET HIT: ${current_pnl:.2f}. Executing Instant Close All !!!")
                         self.close_all_trades()
-                        time.sleep(1)
+                        # Immediately refresh active trades from MT5 to prevent loop sticking
+                        self.active_trades = self.bridge.get_open_positions()
+                        time.sleep(2) # Give MT5 time to process all closures
                         continue
 
-                # --- PHASE 2: NORMAL SPEED (Market Data & Strategy) ---
+                # --- PHASE 2: NORMAL SPEED (Market Data & Strategy - 1s intervals) ---
                 now = time.time()
                 if now - last_slow_update >= 1.0:
                     last_slow_update = now
 
-                    target_symbols = list(set(self.symbols + ["EURUSD", "GBPUSD", "USDJPY", "USDCAD", "AUDUSD", "NZDUSD", "USDCHF", "XAUUSD"]))
+                    # Update Account & Positions once per second
+                    self.active_trades = self.bridge.get_open_positions()
+                    self.account_cache = self.bridge.get_account_info()
+
+                    # Only fetch info for active symbols and core majors to save bandwidth/CPU
+                    target_symbols = list(set(self.symbols + ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]))
                     for symbol in target_symbols:
                         ticker = self.bridge.get_symbol_info(symbol)
                         if ticker:
                             with self.data_lock:
                                 self.market_scanner[symbol] = ticker
-                                # 5s Chart Buffer
+                                # 5s Chart Buffer (optimized to avoid excessive lock duration)
                                 if now - self._last_5s_update >= 5:
                                     if symbol not in self.price_history_5s: self.price_history_5s[symbol] = []
                                     self.price_history_5s[symbol].append({"time": int(now), "close": ticker['bid']})
@@ -95,8 +113,11 @@ class ExecutionEngine:
                     self.equity_history.append({"time": now, "equity": new_equity})
                     if len(self.equity_history) > 100: self.equity_history.pop(0)
 
-                    # Strategy Evaluation
-                    if self.running and self.symbols:
+                    # 3. Strategy Evaluation & Regime Detection
+                    # We run this always so the dashboard/logs stay updated,
+                    # but the actual trade execution happens inside _evaluate_active_strategy
+                    # only if self.running is True.
+                    if self.symbols:
                         if self._current_symbol_idx >= len(self.symbols): self._current_symbol_idx = 0
                         target_symbol = self.symbols[self._current_symbol_idx]
                         self._evaluate_active_strategy(target_symbol)
@@ -160,9 +181,13 @@ class ExecutionEngine:
                         for t in tickets: self.bridge.close_position(t)
             return
 
-        # 1. Fetch Market History
-        data = self.bridge.get_market_data(symbol, timeframe=self.mt5_timeframe, count=250)
-        if data is None or len(data) == 0: return
+        # 1. Fetch Market History (Increased to 500 for better M30/H1 context)
+        data = self.bridge.get_market_data(symbol, timeframe=self.mt5_timeframe, count=500)
+        if data is None or len(data) == 0:
+            logging.warning(f"[{symbol}] Failed to fetch market data from MT5.")
+            return
+
+        logging.info(f"[{symbol}] Processing {len(data)} bars for strategy evaluation.")
 
         signal = None
         regime = "analyzing..."
@@ -178,10 +203,13 @@ class ExecutionEngine:
         with self.data_lock:
             self.symbol_regimes[symbol] = regime
 
-        # Execute if signal found
+        # Execute if signal found AND engine is running
         if signal:
-            logging.info(f"!!! {active.upper()} SIGNAL APPROVED: {symbol} {signal['reason']} !!!")
-            self._execute_signal(signal)
+            if self.running:
+                logging.info(f"!!! {active.upper()} SIGNAL APPROVED: {symbol} {signal['reason']} !!!")
+                self._execute_signal(signal)
+            else:
+                logging.info(f"[{symbol}] Signal detected ({signal['reason']}) but engine is in PASSIVE mode (Stopped).")
 
     def _execute_signal(self, signal):
         status, validated = self.risk_manager.check_order(signal, active_trades_count=len(self.active_trades))
@@ -206,6 +234,23 @@ class ExecutionEngine:
     def stop(self):
         self.running = False
         logging.info("Trading Engine Deactivated.")
+
+    def shutdown(self):
+        """Complete shutdown of the engine and bridge."""
+        logging.info("Shutting down Execution Engine...")
+        self.stop()
+        self._stop_event.set()
+
+        # The sync_thread is a daemon, so we don't strictly need to wait for it.
+        # But we try to give it a moment to finish its current loop iteration.
+        if hasattr(self, 'sync_thread') and self.sync_thread.is_alive():
+            logging.info("Signaling sync thread to stop...")
+            # We don't join() anymore as it might be blocked in a C-extension call
+            # that join() can't interrupt on some systems.
+
+        logging.info("Calling Bridge shutdown...")
+        self.bridge.shutdown()
+        logging.info("Execution Engine shutdown sequence complete.")
 
     def set_timeframe(self, tf_str):
         self.timeframe_str = tf_str

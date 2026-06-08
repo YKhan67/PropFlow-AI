@@ -2,21 +2,22 @@ import json
 import os
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from app.execution.execution_engine import ExecutionEngine
 from app.execution.backtest_engine import BacktestEngine
 import logging
 from datetime import datetime
 
-app = FastAPI(title="PropFlow AI Backend")
+# Configure logging to show engine activity in the console
+logging.basicConfig(level=logging.INFO)
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
 
-# Enable CORS for the frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Ensure third party logs don't drown out our engine
+logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+logger = logging.getLogger("PropFlow-AI")
 
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "settings.json")
 
@@ -50,30 +51,61 @@ def save_settings(data):
     with open(SETTINGS_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# Initial load
+# Initial config load for routes
 config_data = load_settings()
-mt5_conf = config_data.get('mt5', {})
-active_strategy = config_data['risk'].get('active_strategy', 'hybrid_hmm')
 
-# Select correct symbols based on saved strategy
-if active_strategy == 'hybrid_hmm':
-    initial_symbols = config_data.get('symbols', [])
-elif active_strategy == 'quant_engine':
-    initial_symbols = config_data.get('symbols_quant', [])
-elif active_strategy == 'correlation_reversion':
-    initial_symbols = config_data.get('symbols_corr', [])
-else:
-    initial_symbols = config_data.get('symbols_gold', [])
+# Engine will be initialized in lifespan
+engine: ExecutionEngine = None
+backtest_engine: BacktestEngine = None
 
-engine = ExecutionEngine(
-    initial_symbols,
-    config_data['risk'],
-    mt5_login=mt5_conf.get('login'),
-    mt5_password=mt5_conf.get('password'),
-    mt5_server=mt5_conf.get('server'),
-    timeframe=config_data.get('timeframe', 'H1')
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global engine, backtest_engine
+
+    mt5_conf = config_data.get('mt5', {})
+    active_strategy = config_data['risk'].get('active_strategy', 'hybrid_hmm')
+
+    # Select correct symbols based on saved strategy
+    if active_strategy == 'hybrid_hmm':
+        initial_symbols = config_data.get('symbols', [])
+    elif active_strategy == 'quant_engine':
+        initial_symbols = config_data.get('symbols_quant', [])
+    elif active_strategy == 'correlation_reversion':
+        initial_symbols = config_data.get('symbols_corr', [])
+    else:
+        initial_symbols = config_data.get('symbols_gold', [])
+
+    logger.info("Initializing PropFlow AI Engine...")
+    engine = ExecutionEngine(
+        initial_symbols,
+        config_data['risk'],
+        mt5_login=mt5_conf.get('login'),
+        mt5_password=mt5_conf.get('password'),
+        mt5_server=mt5_conf.get('server'),
+        timeframe=config_data.get('timeframe', 'H1')
+    )
+    backtest_engine = BacktestEngine(engine.bridge)
+
+    yield
+
+    if engine:
+        logger.info("Initiating engine shutdown...")
+        engine.shutdown()
+
+    logger.info("FastAPI lifespan shutdown complete. Forcing process termination...")
+    # The nuclear option for Windows to ensure all threads and child processes are killed
+    os._exit(0)
+
+app = FastAPI(title="PropFlow AI Backend", lifespan=lifespan)
+
+# Enable CORS for the frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-backtest_engine = BacktestEngine(engine.bridge)
 
 @app.get("/")
 def read_root():
@@ -92,13 +124,13 @@ def update_config(new_config: dict):
         engine.risk_manager.starting_balance = config_data['risk'].get('account_balance', 100000.0)
 
         # Update AI Engines if they exist
-        if engine.ai_hmm:
-            engine.ai_hmm.signal_gate.dd_config.min_time_between_trades_seconds = config_data['risk'].get('min_time_between_trades', 300)
-            engine.ai_hmm.signal_gate.dd_config.daily_drawdown_limit_pct = config_data['risk'].get('max_daily_drawdown', 0.05) * 100
-            engine.ai_hmm.signal_gate.dd_config.total_drawdown_limit_pct = config_data['risk'].get('max_total_drawdown', 0.10) * 100
-        if engine.ai_quant:
-            engine.ai_quant.z_entry = config_data['risk'].get('quant_zscore_entry', 2.0)
-            engine.ai_quant.z_exit = config_data['risk'].get('quant_zscore_exit', 0.5)
+        if hasattr(engine, 'hmm_handler'):
+            engine.hmm_handler.ai.signal_gate.dd_config.min_time_between_trades_seconds = config_data['risk'].get('min_time_between_trades', 300)
+            engine.hmm_handler.ai.signal_gate.dd_config.daily_drawdown_limit_pct = config_data['risk'].get('max_daily_drawdown', 0.05) * 100
+            engine.hmm_handler.ai.signal_gate.dd_config.total_drawdown_limit_pct = config_data['risk'].get('max_total_drawdown', 0.10) * 100
+        if hasattr(engine, 'quant_handler'):
+            engine.quant_handler.ai.z_entry = config_data['risk'].get('quant_zscore_entry', 2.0)
+            engine.quant_handler.ai.z_exit = config_data['risk'].get('quant_zscore_exit', 0.5)
 
         # Switch engine active symbols based on strategy change
         if config_data['risk'].get('active_strategy') == 'hybrid_hmm':

@@ -39,7 +39,7 @@ class FeatureConfig:
     use_bb_width: bool = True
     use_volatility: bool = True
     use_volume: bool = True
-    use_hurst: bool = True
+    use_hurst: bool = False # Disabled by default for performance
     feature_names: list[str] = field(default_factory=list, init=False)
 
     def __post_init__(self):
@@ -136,10 +136,13 @@ def extract_features(
         atr_vals = atr(high, low, close, config.trend_period)
         plus_di = np.full(n, np.nan)
         minus_di = np.full(n, np.nan)
+
+        # Calculate plus_di/minus_di for all valid rows
         for i in range(config.trend_period, n):
             if atr_vals[i] > 1e-10:
                 plus_di[i] = 100 * np.mean(plus_dm[i - config.trend_period : i]) / atr_vals[i]
                 minus_di[i] = 100 * np.mean(minus_dm[i - config.trend_period : i]) / atr_vals[i]
+
         features[:, col] = adx_vals
         features[:, col + 1] = plus_di
         features[:, col + 2] = minus_di
@@ -163,18 +166,24 @@ def extract_features(
 
     # Volume ratio (current / rolling average)
     if config.use_volume:
-        vol_ma = np.full(n, np.nan)
-        for i in range(config.vol_period, n):
-            vol_ma[i] = np.mean(volume[i - config.vol_period : i])
+        vol_s = pd.Series(volume)
+        vol_ma = vol_s.rolling(window=config.vol_period).mean().values
         features[:, col] = volume / np.maximum(vol_ma, 1e-10)
         col += 1
 
     # Hurst exponent
     if config.use_hurst:
-        for i in range(config.max_lookback, n):
-            features[i, col] = _hurst_exponent(
-                close[i - config.max_lookback : i], max_lag=20
-            )
+        # Calculate Hurst for enough rows to allow HMM training, or just the last row for prediction.
+        # If we have many rows, we assume we're training.
+        if n > 150:
+             # Training mode: Calculate for a window to allow HMM to learn
+             for i in range(n - 100, n):
+                features[i, col] = _hurst_exponent(
+                    close[max(0, i - config.max_lookback) : i], max_lag=20
+                )
+        else:
+             # Prediction mode: just last bar
+             features[-1, col] = _hurst_exponent(close[-config.max_lookback:], max_lag=20)
         col += 1
 
     return features, config.feature_names
@@ -194,8 +203,11 @@ def extract_regime_features(
 
     raw_features, names = extract_features(ohlcv, config)
 
-    # Find first valid index
-    first_valid = np.where(~np.isnan(raw_features).any(axis=1))[0]
+    # Find first valid index (ignoring columns that might be NaN by design like Hurst)
+    # We use ADX/RSI as the anchor for "validity"
+    mask = ~np.isnan(raw_features[:, :3]).any(axis=1) # First 3 are ADX related
+    first_valid = np.where(mask)[0]
+
     if len(first_valid) == 0:
         raise ValueError("No valid features could be extracted from the data")
 
@@ -212,7 +224,7 @@ def extract_regime_features(
             if std > 1e-10:
                 features[:, j] = (features[:, j] - mean) / std
 
-    # Any remaining NaN → 0
+    # Any remaining NaN → 0 (this handles Hurst NaN values in training)
     features = np.nan_to_num(features, nan=0.0)
 
     return features

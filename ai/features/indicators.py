@@ -1,136 +1,73 @@
-"""Technical indicator utilities for FX markets."""
+"""Technical indicator utilities for FX markets using optimized pandas/numpy operations."""
 
 import numpy as np
+import pandas as pd
 from typing import Optional
 
-try:
-    from numba import jit
-    _HAVE_NUMBA = True
-except ImportError:
-    _HAVE_NUMBA = False
-    jit = lambda **kwargs: lambda f: f  # no-op decorator
-
-
-if _HAVE_NUMBA:
-
-    @jit(nopython=True)
-    def _rolling_rms(data: np.ndarray, window: int) -> np.ndarray:
-        result = np.full_like(data, np.nan)
-        for i in range(window - 1, len(data)):
-            sq = 0.0
-            for j in range(window):
-                sq += data[i - j] ** 2
-            result[i] = np.sqrt(sq / window)
-        return result
-else:
-
-    def _rolling_rms(data: np.ndarray, window: int) -> np.ndarray:
-        result = np.full_like(data, np.nan)
-        for i in range(window - 1, len(data)):
-            sq = 0.0
-            for j in range(window):
-                sq += data[i - j] ** 2
-            result[i] = np.sqrt(sq / window)
-        return result
-
-
 def atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
-    """Average True Range."""
-    tr = np.maximum(
-        high[1:] - low[1:],
-        np.maximum(
-            np.abs(high[1:] - close[:-1]),
-            np.abs(low[1:] - close[:-1]),
-        ),
-    )
-    tr_full = np.empty_like(close)
-    tr_full[0] = high[0] - low[0]
-    tr_full[1:] = tr
-    out = np.full_like(close, np.nan)
-    out[period - 1] = np.mean(tr_full[:period])
-    for i in range(period, len(close)):
-        out[i] = (out[i - 1] * (period - 1) + tr_full[i]) / period
-    return out
+    """Average True Range (Vectorized)."""
+    h = pd.Series(high)
+    l = pd.Series(low)
+    c = pd.Series(close)
 
+    tr1 = h - l
+    tr2 = (h - c.shift(1)).abs()
+    tr3 = (l - c.shift(1)).abs()
+
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr_vals = tr.rolling(window=period).mean() # Simple Moving Average for ATR
+    return atr_vals.values
 
 def rsi(close: np.ndarray, period: int = 14) -> np.ndarray:
-    """Relative Strength Index."""
-    delta = np.diff(close)
-    gain = np.where(delta > 0, delta, 0.0)
-    loss = np.where(delta < 0, -delta, 0.0)
-    avg_gain = np.full_like(close, np.nan)
-    avg_loss = np.full_like(close, np.nan)
-    avg_gain[period] = np.mean(gain[:period])
-    avg_loss[period] = np.mean(loss[:period])
-    for i in range(period + 1, len(close)):
-        avg_gain[i] = (avg_gain[i - 1] * (period - 1) + gain[i - 1]) / period
-        avg_loss[i] = (avg_loss[i - 1] * (period - 1) + loss[i - 1]) / period
-    rs = avg_gain / np.maximum(avg_loss, 1e-10)
+    """Relative Strength Index (Vectorized)."""
+    delta = pd.Series(close).diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+
+    rs = gain / loss.replace(0, 1e-10)
     rsi_vals = 100 - (100 / (1 + rs))
-    return rsi_vals
+    return rsi_vals.values
 
+def adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
+    """Average Directional Index (Vectorized)."""
+    h = pd.Series(high)
+    l = pd.Series(low)
+    c = pd.Series(close)
 
-def adx(
-    high: np.ndarray,
-    low: np.ndarray,
-    close: np.ndarray,
-    period: int = 14,
-) -> np.ndarray:
-    """Average Directional Index - trend strength indicator."""
-    up = high[1:] - high[:-1]
-    down = low[:-1] - low[1:]
-    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
-    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
-    tr = np.maximum(
-        high[1:] - low[1:],
-        np.maximum(np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1])),
-    )
-    # Smooth
-    atr_vals = atr(high, low, close, period)
-    plus_di = np.full_like(close, np.nan)
-    minus_di = np.full_like(close, np.nan)
-    for i in range(period, len(close)):
-        if atr_vals[i] > 1e-10:
-            plus_di[i] = 100 * np.mean(plus_dm[i - period : i]) / atr_vals[i]
-            minus_di[i] = 100 * np.mean(minus_dm[i - period : i]) / atr_vals[i]
-    dx = np.abs(plus_di - minus_di) / np.maximum((plus_di + minus_di), 1e-10) * 100
-    adx_vals = np.full_like(close, np.nan)
-    for i in range(period * 2 - 1, len(close)):
-        adx_vals[i] = np.mean(dx[i - period + 1 : i + 1])
-    return adx_vals
+    up = h.diff()
+    down = -l.diff()
 
+    plus_dm = up.where((up > down) & (up > 0), 0)
+    minus_dm = down.where((down > up) & (down > 0), 0)
 
-def bollinger_bands(
-    close: np.ndarray, period: int = 20, std_dev: float = 2.0
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Bollinger Bands."""
-    rolling_mean = np.full_like(close, np.nan)
-    rolling_std = np.full_like(close, np.nan)
-    for i in range(period - 1, len(close)):
-        segment = close[i - period + 1 : i + 1]
-        rolling_mean[i] = np.mean(segment)
-        rolling_std[i] = np.std(segment, ddof=1)
-    upper = rolling_mean + std_dev * rolling_std
-    lower = rolling_mean - std_dev * rolling_std
-    bandwidth = (upper - lower) / np.maximum(rolling_mean, 1e-10)
-    return upper, lower, bandwidth
+    atr_v = pd.Series(atr(high, low, close, period))
 
+    plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr_v.replace(0, 1e-10))
+    minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr_v.replace(0, 1e-10))
+
+    dx = (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1e-10) * 100
+    adx_vals = dx.rolling(window=period).mean()
+    return adx_vals.values
+
+def bollinger_bands(close: np.ndarray, period: int = 20, std_dev: float = 2.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bollinger Bands (Vectorized)."""
+    s = pd.Series(close)
+    ma = s.rolling(window=period).mean()
+    std = s.rolling(window=period).std()
+
+    upper = ma + (std_dev * std)
+    lower = ma - (std_dev * std)
+    bandwidth = (upper - lower) / ma.replace(0, 1e-10)
+
+    return upper.values, lower.values, bandwidth.values
 
 def rolling_volatility(close: np.ndarray, period: int = 20) -> np.ndarray:
-    """Annualised rolling volatility from log returns."""
-    log_returns = np.diff(np.log(np.maximum(close, 1e-10)))
-    vol = np.full_like(close, np.nan)
-    for i in range(period, len(log_returns)):
-        vol[i + 1] = np.std(log_returns[i - period : i], ddof=1) * np.sqrt(252)
-    return vol
-
+    """Annualised rolling volatility (Vectorized)."""
+    log_returns = np.log(pd.Series(close) / pd.Series(close).shift(1))
+    vol = log_returns.rolling(window=period).std() * np.sqrt(252)
+    return vol.values
 
 def zscore(series: np.ndarray, period: int = 20) -> np.ndarray:
-    """Rolling z-score."""
-    rolling_mean = np.full_like(series, np.nan)
-    rolling_std = np.full_like(series, np.nan)
-    for i in range(period - 1, len(series)):
-        seg = series[i - period + 1 : i + 1]
-        rolling_mean[i] = np.mean(seg)
-        rolling_std[i] = np.std(seg, ddof=1)
-    return (series - rolling_mean) / np.maximum(rolling_std, 1e-10)
+    """Rolling z-score (Vectorized)."""
+    s = pd.Series(series)
+    return ((s - s.rolling(window=period).mean()) / s.rolling(window=period).std().replace(0, 1e-10)).values

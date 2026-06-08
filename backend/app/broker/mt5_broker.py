@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import datetime
+import threading
 
 try:
     import MetaTrader5 as mt5
@@ -20,14 +21,17 @@ class MT5Bridge:
 
     def initialize(self):
         if MT5_AVAILABLE:
+            logging.info("Attempting to initialize MT5...")
             # Ensure types are correct for MT5 API
             login = int(self.login) if self.login and str(self.login).isdigit() else None
             password = str(self.password) if self.password else None
             server = str(self.server) if self.server else None
 
             if login:
+                logging.info(f"Using provided credentials for account {login}")
                 success = mt5.initialize(login=login, password=password, server=server)
             else:
+                logging.info("Using default/cached MT5 credentials")
                 success = mt5.initialize() # Try last used account if no credentials
 
             if not success:
@@ -37,9 +41,10 @@ class MT5Bridge:
                 self.connected = False
                 return False
 
+            logging.info("MT5 base initialization successful. Fetching account info...")
             account_info = mt5.account_info()
             if account_info:
-                logging.info(f"Connected to MT5! Account: {account_info.login}, Name: {account_info.name}, Broker: {account_info.company}")
+                logging.info(f"Connected to MT5! Account: {account_info.login}, Name: {account_info.name}")
                 self.connected = True
                 self.last_error = ""
                 return True
@@ -338,6 +343,13 @@ class MT5Bridge:
         return []
 
     def shutdown(self):
-        if MT5_AVAILABLE:
-            mt5.shutdown()
+        if MT5_AVAILABLE and self.connected:
+            logging.info("Closing MT5 connection (non-blocking)...")
+            try:
+                # mt5.shutdown can hang if terminal is not responsive.
+                # We run it in a daemon thread and don't wait for it to finish.
+                shutdown_thread = threading.Thread(target=mt5.shutdown, daemon=True)
+                shutdown_thread.start()
+            except Exception as e:
+                logging.error(f"Error during MT5 shutdown: {e}")
         self.connected = False

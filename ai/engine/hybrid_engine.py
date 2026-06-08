@@ -52,12 +52,13 @@ class EngineDecision:
     filter_decision: FilterDecision
     filter_reason: str
     passed_all_filters: bool
+    confidence_threshold: float = 0.1 # Threshold for actionability
 
     @property
     def is_actionable(self) -> bool:
         return (
             self.passed_all_filters
-            and self.confidence > 0.1 # Lowered from 0.3
+            and self.confidence >= self.confidence_threshold
             and self.signal not in (SignalType.HOLD, SignalType.EXIT)
         )
 
@@ -74,48 +75,45 @@ class RegimeParams:
     confidence_threshold: float = 0.5
     max_position_size_pct: float = 2.0
     use_wider_stops: bool = False
+    bb_multiplier: float = 1.5 # Multiplier for Bollinger Bands
 
     @classmethod
     def for_regime(cls, regime: str, symbol: str = "", timeframe: str = "H1") -> "RegimeParams":
-        """Return appropriate params for the detected market regime, adjusted for asset class and timeframe."""
-        # 1. Base Thresholds
+        """Return appropriate params for the detected market regime, adjusted dynamically for timeframe."""
         params = cls()
 
+        # Ensure timeframe is a valid string
+        tf_str = str(timeframe).upper() if timeframe else "H1"
+
+        # 1. Base Multiplier using "Square Root of Time"
+        # Calibrated to H1 (60 mins)
+        tf_map = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
+        tf_minutes = tf_map.get(tf_str, 60)
+
+        # Scaling factor: sqrt(selected_minutes / 60)
+        scaling_factor = np.sqrt(tf_minutes / 60.0)
+
+        # BB Multiplier scaling: tighter for lower timeframes
+        params.bb_multiplier = 1.0 + (np.log10(max(1, tf_minutes)) * 0.3)
+
         if regime == "trending":
-            params.trend_threshold = 0.1
-            params.confidence_threshold = 0.2
+            params.trend_threshold = 0.08 * scaling_factor
+            params.confidence_threshold = 0.15 * scaling_factor
         elif regime == "ranging":
-            params.trend_threshold = 0.5
-            params.confidence_threshold = 0.6
+            params.trend_threshold = 0.4 * scaling_factor
+            params.confidence_threshold = 0.3 # Keep confidence stable for mean reversion
         elif regime == "volatile":
-            params.trend_threshold = 0.7
-            params.confidence_threshold = 0.7
-        else: # analyzesing or unknown
-            params.trend_threshold = 0.3
+            params.trend_threshold = 0.5 * scaling_factor
+            params.confidence_threshold = 0.4 * scaling_factor
+        else: # analyzing or unknown
+            params.trend_threshold = 0.3 * scaling_factor
             params.confidence_threshold = 0.4
 
-        # 2. Timeframe-Specific Relaxation
-        # Lower timeframes (M1-M30) have smaller price moves per bar.
-        # We relax the thresholds proportionally so the AI can actually trigger.
-        tf_multipliers = {
-            "M1": 0.05,    # Ultra relaxed
-            "M5": 0.15,
-            "M15": 0.25,
-            "M30": 0.4,   # Relaxed by 60%
-            "H1": 1.0,    # Baseline
-            "H4": 2.0,    # Stricter (needs larger moves)
-            "D1": 4.0     # Very strict
-        }
-        multiplier = tf_multipliers.get(timeframe.upper(), 1.0)
-        params.trend_threshold *= multiplier
-
-        # 3. Asset-Specific Multipliers
-        # Metals move much more in % than FX. Scale up their thresholds to avoid 'volatile' noise.
+        # 2. Asset-Specific Adjustments
         is_metal = any(m in symbol.upper() for m in ["XAU", "XAG", "GOLD", "SILVER"])
-
         if is_metal:
-            # Neutralize multipliers to allow equal sensitivity
-            params.trend_threshold *= 1.0
+            # Metals need wider thresholds due to high point-value volatility
+            params.trend_threshold *= 1.5
         else:
             # FX pairs are slightly more sensitive
             params.trend_threshold *= 0.8
@@ -224,12 +222,12 @@ class HybridDecisionEngine:
 
         # Regime-adaptive decision
         if regime == "trending":
-            # Trend-following: balanced momentum thresholds
-            if roc20 > regime_params.trend_threshold * 1.1 and latest_close > sma20:
-                confidence = min(1.0, abs(roc20) / 1.0)
+            # Trend-following: balanced momentum thresholds from original development
+            if roc20 > regime_params.trend_threshold and latest_close > sma20:
+                confidence = min(1.0, abs(roc20) / 0.5) # Original more sensitive formula
                 return SignalType.LONG, confidence
-            elif roc20 < -regime_params.trend_threshold * 0.9 and latest_close < sma20:
-                confidence = min(1.0, abs(roc20) / 1.0)
+            elif roc20 < -regime_params.trend_threshold and latest_close < sma20:
+                confidence = min(1.0, abs(roc20) / 0.5)
                 return SignalType.SHORT, confidence
             else:
                 # Debug log for why trending failed
@@ -237,11 +235,11 @@ class HybridDecisionEngine:
                 pass
 
         elif regime == "ranging":
-            # Mean-reversion: buy low, sell high within range
+            # Mean-reversion: use scaled BB bands
             sma = np.mean(close[-20:])
             std = np.std(close[-20:], ddof=1)
-            bb_high = sma + 1.5 * std
-            bb_low = sma - 1.5 * std
+            bb_high = sma + regime_params.bb_multiplier * std
+            bb_low = sma - regime_params.bb_multiplier * std
 
             if latest_close <= bb_low:
                 confidence = 0.5
@@ -255,8 +253,8 @@ class HybridDecisionEngine:
 
         elif regime == "volatile":
             # Highly volatile: trade if signal is stronger than normal trend requirement
-            if abs(roc5) > regime_params.trend_threshold * 1.5:
-                confidence = min(0.6, abs(roc5) / 1.5)
+            if abs(roc5) > regime_params.trend_threshold:
+                confidence = min(0.9, abs(roc5) / 1.0) # Increased max confidence
                 return SignalType.REDUCED_LONG if roc5 > 0 else SignalType.REDUCED_SHORT, confidence
             else:
                 return SignalType.HOLD, 0.0
@@ -286,6 +284,8 @@ class HybridDecisionEngine:
         self._last_regime = current_regime
         self._regime_history.append(current_regime)
 
+        logging.info(f"[{symbol}] Detected Regime: {current_regime.upper()}")
+
         # 2. Regime-adaptive parameters (Now adjusted for timeframe)
         regime_params = RegimeParams.for_regime(current_regime, symbol, timeframe)
 
@@ -293,14 +293,21 @@ class HybridDecisionEngine:
         feature_matrix, feature_names = extract_features(ohlcv, self.feature_config)
         close = ohlcv["close"].values.astype(np.float64)
 
-        # 4. Generate signal
-        signal, confidence = self._signal_fn(
-            close,
-            current_regime,
-            regime_params,
-            feature_matrix,
-            feature_names,
-        )
+        # 4. Generate signal (Slice data if bar_index is provided to avoid look-ahead bias)
+        signal_close = close[:bar_index + 1] if bar_index >= 0 else close
+        signal_features = feature_matrix[:bar_index + 1] if bar_index >= 0 else feature_matrix
+
+        try:
+            signal, confidence = self._signal_fn(
+                signal_close,
+                current_regime,
+                regime_params,
+                signal_features,
+                feature_names,
+            )
+        except Exception as e:
+            logging.error(f"[{symbol}] Signal function error: {e}")
+            signal, confidence = SignalType.HOLD, 0.0
 
         # 5. Apply rule-based filters
         current_row = ohlcv.iloc[bar_index] if bar_index != -1 else ohlcv.iloc[-1]
@@ -350,6 +357,7 @@ class HybridDecisionEngine:
             signal=final_signal,
             regime=current_regime,
             confidence=float(confidence),
+            confidence_threshold=regime_params.confidence_threshold,
             risk_multiplier=float(risk_multiplier),
             filter_decision=filter_decision,
             filter_reason=filter_reason,

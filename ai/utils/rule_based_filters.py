@@ -27,7 +27,7 @@ class VolatilityFilterConfig:
     """Configuration for volatility-based filtering."""
 
     # ATR threshold relative to median ATR (multiple)
-    atr_threshold_multiple: float = 2.5
+    atr_threshold_multiple: float = 5.0
     atr_period: int = 14
 
     # Bollinger Band width threshold (normalized)

@@ -19,8 +19,8 @@ logging.basicConfig(
 )
 
 def main():
-    # reload=True uses Uvicorn's internal color logic
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True, app_dir="backend")
+    # Set reload=False to ensure clean exit on Windows
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=False, app_dir="backend")
 
 if __name__ == "__main__":
     main()
