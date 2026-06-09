@@ -210,6 +210,12 @@ def close_all_trades():
     success = engine.close_all_trades()
     return {"message": "Close all trades initiated", "success": success}
 
+@app.post("/trades/close-profitable")
+def close_profitable_trades(background_tasks: BackgroundTasks):
+    # Running as a background task to ensure it doesn't block the API if many trades exist
+    background_tasks.add_task(engine.close_profitable_trades)
+    return {"message": "Closing profitable trades in background"}
+
 @app.post("/trades/close/{ticket}")
 def close_trade(ticket: int):
     success = engine.bridge.close_position(ticket)

@@ -7,7 +7,7 @@
         "scale_down_excess": false,
         "max_active_trades": 100,
         "global_take_profit": 300,
-        "min_time_between_trades": 0,
+        "min_time_between_trades": 5,
         "active_strategy": "hybrid_hmm",
         "quant_zscore_entry": 1.8,
         "quant_zscore_exit": 0.7

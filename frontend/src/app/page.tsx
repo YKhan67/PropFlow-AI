@@ -10,13 +10,18 @@ import { PriceChart } from "@/components/charts/PriceChart";
 import { Wallet, TrendingUp, AlertCircle, Activity, Play, Square, XCircle } from "lucide-react";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { apiService } from "@/services/api";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 export default function Dashboard() {
   const { status, trades, markets, history, loading, error, refetch } = useDashboardData();
   const [actionLoading, setActionLoading] = useState(false);
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
   const [symbolHistory, setSymbolsHistory] = useState<{time: string, price: number}[]>([]);
+
+  // Sort trades by profit descending
+  const sortedTrades = useMemo(() => {
+    return [...trades].sort((a, b) => (b.profit || 0) - (a.profit || 0));
+  }, [trades]);
 
   // Auto-select first symbol if none selected or if current selection is no longer available
   useEffect(() => {
@@ -87,6 +92,21 @@ export default function Dashboard() {
     }
   };
 
+  const handleCloseProfitable = async () => {
+    if (!confirm("Are you sure you want to close only PROFITABLE trades?")) return;
+    setActionLoading(true);
+    try {
+      await apiService.closeProfitableTrades();
+      // Wait a bit before refetching to allow the background task to start closing
+      setTimeout(() => refetch(), 1000);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to initiate closing profitable trades");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleCloseTrade = async (id: string | number) => {
     setActionLoading(true);
     try {
@@ -132,13 +152,22 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center gap-4">
               {trades.length > 0 && (
-                <button
-                  onClick={handleCloseAll}
-                  disabled={actionLoading || loading}
-                  className="flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rose-600 disabled:opacity-50"
-                >
-                  <XCircle className="h-4 w-4" /> Close All Trades
-                </button>
+                <>
+                  <button
+                    onClick={handleCloseProfitable}
+                    disabled={actionLoading || loading}
+                    className="flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-600 disabled:opacity-50"
+                  >
+                    <Activity className="h-4 w-4" /> Close Profitable
+                  </button>
+                  <button
+                    onClick={handleCloseAll}
+                    disabled={actionLoading || loading}
+                    className="flex items-center gap-2 rounded-lg bg-rose-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-rose-600 disabled:opacity-50"
+                  >
+                    <XCircle className="h-4 w-4" /> Close All
+                  </button>
+                </>
               )}
               <button
                 onClick={handleToggleEngine}
@@ -216,13 +245,13 @@ export default function Dashboard() {
                 />
               )}
               <ActiveTrades
-                data={trades.map(t => ({
-                  id: t.id,
-                  pair: t.symbol,
-                  type: t.type,
-                  lots: t.volume,
-                  profit: t.profit
-                }))}
+                data={sortedTrades.map(t => ({
+                    id: t.id,
+                    pair: t.symbol,
+                    type: t.type,
+                    lots: t.volume,
+                    profit: t.profit
+                  }))}
                 onCloseTrade={handleCloseTrade}
                 totalProfit={trades.reduce((sum, t) => sum + (typeof t.profit === 'number' ? t.profit : 0), 0)}
               />

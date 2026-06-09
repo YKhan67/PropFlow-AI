@@ -21,7 +21,7 @@ const defaultTrades: Trade[] = [
   { id: 3, pair: "GBPUSD", type: "BUY", lots: 2.0, profit: "+$340.00", status: "Running" },
 ];
 
-export function ActiveTrades({ data = defaultTrades, onCloseTrade, totalProfit }: ActiveTradesProps) {
+export function ActiveTrades({ data = [], onCloseTrade, totalProfit }: ActiveTradesProps) {
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-6">
       <div className="mb-4 flex items-center justify-between">

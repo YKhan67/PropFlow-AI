@@ -265,6 +265,25 @@ class ExecutionEngine:
         for pos in self.active_trades: self.bridge.close_position(pos['id'])
         return True
 
+    def close_profitable_trades(self):
+        """Closes only trades that are currently in profit."""
+        # Work on a snapshot of trades to avoid list modification issues during loop
+        trades_to_check = list(self.active_trades)
+        closed_count = 0
+
+        for pos in trades_to_check:
+            profit = pos.get('profit', 0)
+            if profit > 0:
+                logging.info(f"Closing profitable trade: {pos['id']} ({pos['symbol']}) with profit: ${profit:.2f}")
+                self.bridge.close_position(pos['id'])
+                closed_count += 1
+
+        if closed_count > 0:
+            # Force refresh state
+            self.active_trades = self.bridge.get_open_positions()
+
+        return closed_count
+
     def calculate_total_pnl(self):
         return sum(t.get('profit', 0) + t.get('commission', 0) + t.get('swap', 0) for t in self.active_trades)
 

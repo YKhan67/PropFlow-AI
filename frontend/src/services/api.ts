@@ -165,6 +165,12 @@ export const apiService = {
     return response.json();
   },
 
+  async closeProfitableTrades() {
+    const response = await fetch(`${API_BASE_URL}/trades/close-profitable`, { method: "POST" });
+    if (!response.ok) throw new Error("Failed to close profitable trades");
+    return response.json();
+  },
+
   async closeTrade(ticket: string | number) {
     const response = await fetch(`${API_BASE_URL}/trades/close/${ticket}`, { method: "POST" });
     if (!response.ok) throw new Error("Failed to close trade");
