@@ -1,11 +1,11 @@
 {
     "risk": {
-        "max_daily_drawdown": 0.1,
-        "max_total_drawdown": 0.2,
+        "max_daily_drawdown": 0.5,
+        "max_total_drawdown": 0.5,
         "max_position_size": 1,
         "account_balance": 300000,
         "scale_down_excess": false,
-        "max_active_trades": 50,
+        "max_active_trades": 100,
         "global_take_profit": 300,
         "min_time_between_trades": 0,
         "active_strategy": "hybrid_hmm",
