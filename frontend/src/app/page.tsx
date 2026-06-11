@@ -7,7 +7,7 @@ import { EquityChart } from "@/components/charts/EquityChart";
 import { MarketScanner } from "@/components/dashboard/MarketScanner";
 import { ActiveTrades } from "@/components/dashboard/ActiveTrades";
 import { PriceChart } from "@/components/charts/PriceChart";
-import { Wallet, TrendingUp, AlertCircle, Activity, Play, Square, XCircle } from "lucide-react";
+import { Wallet, TrendingUp, AlertCircle, Activity, Play, Square, XCircle, Shield, Zap } from "lucide-react";
 import { useDashboardData } from "@/hooks/useDashboardData";
 import { apiService } from "@/services/api";
 import { useState, useEffect, useMemo } from "react";
@@ -107,6 +107,32 @@ export default function Dashboard() {
     }
   };
 
+  const handleZeroExposure = async () => {
+    if (!confirm("Zero Buy/Sell\n\nThis action will close opposing Buy and Sell positions with equal value to eliminate hedged exposure while keeping the net balance unchanged. Do you want to continue?")) return;
+
+    setActionLoading(true);
+    try {
+      const result = await apiService.zeroBuySellExposure();
+      if (result.success) {
+        alert(
+          `Zero Buy/Sell Success!\n\n` +
+          `Offset Amount: $${result.offset_amount?.toFixed(2)}\n\n` +
+          `Buy P/L: $${result.before?.buy_pl.toFixed(2)} → $${result.after?.buy_pl.toFixed(2)}\n` +
+          `Sell P/L: $${result.before?.sell_pl.toFixed(2)} → $${result.after?.sell_pl.toFixed(2)}\n` +
+          `Net Balance: $${result.before?.net_pl.toFixed(2)} → $${result.after?.net_pl.toFixed(2)}`
+        );
+      } else {
+        alert(result.error || "Failed to zero exposure");
+      }
+      await refetch();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to execute zero exposure routine");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleCloseTrade = async (id: string | number) => {
     setActionLoading(true);
     try {
@@ -115,6 +141,45 @@ export default function Dashboard() {
     } catch (err) {
       console.error(err);
       alert("Failed to close trade");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleToggleAutoZero = async () => {
+    if (!status) return;
+    setActionLoading(true);
+    try {
+      const newValue = !status.auto_zero_enabled;
+      // Send only the field we want to update
+      await apiService.updateConfig({
+        risk: {
+          auto_zero_enabled: newValue
+        }
+      } as any);
+      await refetch();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to toggle Auto Zero");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleToggleAggressive = async () => {
+    if (!status) return;
+    setActionLoading(true);
+    try {
+      const newValue = !status.aggressive_mode;
+      await apiService.updateConfig({
+        risk: {
+          aggressive_mode: newValue
+        }
+      } as any);
+      await refetch();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to toggle Aggressive Mode");
     } finally {
       setActionLoading(false);
     }
@@ -151,8 +216,43 @@ export default function Dashboard() {
               </p>
             </div>
             <div className="flex items-center gap-4">
+              <button
+                onClick={handleToggleAggressive}
+                disabled={actionLoading || loading}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  status?.aggressive_mode
+                    ? "bg-orange-500 text-white hover:bg-orange-600 shadow-[0_0_15px_rgba(249,115,22,0.4)]"
+                    : "bg-white/5 text-white/40 hover:bg-white/10"
+                } disabled:opacity-50`}
+                title="Toggle Aggressive Trading Mode (Lower thresholds, higher frequency)"
+              >
+                <Zap className={`h-4 w-4 ${status?.aggressive_mode ? "fill-current animate-pulse" : ""}`} />
+                Aggressive: {status?.aggressive_mode ? "ON" : "OFF"}
+              </button>
+
+              <button
+                onClick={handleToggleAutoZero}
+                disabled={actionLoading || loading}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  status?.auto_zero_enabled
+                    ? "bg-emerald-500 text-white hover:bg-emerald-600"
+                    : "bg-white/5 text-white/40 hover:bg-white/10"
+                } disabled:opacity-50`}
+                title="Continuously match and close opposing P/L orders"
+              >
+                <Shield className={`h-4 w-4 ${status?.auto_zero_enabled ? "animate-pulse" : ""}`} />
+                Auto Zero: {status?.auto_zero_enabled ? "ON" : "OFF"}
+              </button>
+
               {trades.length > 0 && (
                 <>
+                  <button
+                    onClick={handleZeroExposure}
+                    disabled={actionLoading || loading}
+                    className="flex items-center gap-2 rounded-lg bg-blue-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-50"
+                  >
+                    <Activity className="h-4 w-4" /> Zero Buy/Sell
+                  </button>
                   <button
                     onClick={handleCloseProfitable}
                     disabled={actionLoading || loading}

@@ -196,7 +196,7 @@ class MT5Bridge:
             logging.info(f"Mock Order Placed: {symbol}, {order_type}, vol={volume}")
             return {"retcode": 10009, "comment": "Request executed", "order": 12345}
 
-    def close_position(self, ticket):
+    def close_position(self, ticket, volume=None):
         if MT5_AVAILABLE:
             positions = mt5.positions_get(ticket=int(ticket))
             if positions is None or len(positions) == 0:
@@ -205,7 +205,12 @@ class MT5Bridge:
 
             pos = positions[0]
             symbol = pos.symbol
-            volume = pos.volume
+            # Use provided volume or full position volume
+            close_volume = float(volume) if volume is not None else float(pos.volume)
+
+            # Ensure we don't try to close more than exists
+            close_volume = min(close_volume, float(pos.volume))
+
             order_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY
 
             tick = mt5.symbol_info_tick(symbol)
@@ -218,12 +223,12 @@ class MT5Bridge:
             request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": symbol,
-                "volume": float(volume),
+                "volume": close_volume,
                 "type": order_type,
                 "position": int(ticket),
                 "price": float(price),
                 "magic": 123456,
-                "comment": "PropFlow Close All",
+                "comment": "PropFlow Partial Close" if volume else "PropFlow Close All",
                 "type_time": mt5.ORDER_TIME_GTC,
                 "type_filling": mt5.ORDER_FILLING_IOC,
             }
@@ -233,7 +238,7 @@ class MT5Bridge:
                 logging.error(f"Failed to close position {ticket}: {result.comment}")
                 return False
 
-            logging.info(f"Closed position {ticket} successfully")
+            logging.info(f"Closed {close_volume} of position {ticket} successfully")
             return True
         return True
 

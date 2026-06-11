@@ -24,6 +24,10 @@ class RiskManager:
         self.current_equity = self.starting_balance
         self._last_trade_times = {} # symbol -> timestamp
 
+        # Auto Zero State
+        self.auto_zero_triggered = False
+        self.auto_zero_status = "Waiting" # Waiting, Triggered, Executed, Failed
+
         logging.info(f"Risk Manager initialized. Starting Balance: {self.starting_balance}")
 
     def update_equity(self, equity):
@@ -47,6 +51,10 @@ class RiskManager:
         if self.current_equity > self.hwm_daily:
             self.hwm_daily = self.current_equity
 
+    def should_trigger_auto_zero(self):
+        """Deprecated: trigger-less matcher used instead."""
+        return False
+
     @property
     def current_total_drawdown(self):
         return (self.hwm_total - self.current_equity) / self.hwm_total
@@ -61,9 +69,13 @@ class RiskManager:
         """
         symbol = order_request['symbol']
         import time
+        is_aggressive = self.config.get('aggressive_mode', False)
 
         # 1. Per-Symbol Cooldown Check (MM:SS supported)
         min_cooldown = self.config.get('min_time_between_trades', 0)
+        if is_aggressive:
+            min_cooldown = min_cooldown // 2 # Reduce cooldown by 50% in aggressive mode
+
         if min_cooldown > 0:
             last_time = self._last_trade_times.get(symbol, 0)
             if time.time() - last_time < min_cooldown:
@@ -109,11 +121,33 @@ class RiskManager:
         import time
         self._last_trade_times[symbol] = time.time()
 
+    def should_trigger_auto_zero(self):
+        """Checks if auto zero should be triggered based on current net PnL."""
+        if not self.config.get('auto_zero_enabled', False):
+            return False
+
+        if self.auto_zero_triggered:
+            return False
+
+        limit = self.config.get('auto_zero_loss_limit', -500)
+        current_pnl = self.current_equity - self.starting_balance
+
+        if current_pnl <= limit:
+            logging.info(f"!!! AUTO ZERO TRIGGERED !!! Current Net PnL (${current_pnl:.2f}) <= Limit (${limit:.2f})")
+            self.auto_zero_triggered = True
+            self.auto_zero_status = "Triggered"
+            return True
+
+        return False
+
     def get_status(self):
         return {
             "equity": self.current_equity,
             "daily_drawdown": self.current_daily_drawdown,
             "total_drawdown": self.current_total_drawdown,
             "hwm_daily": self.hwm_daily,
-            "hwm_total": self.hwm_total
+            "hwm_total": self.hwm_total,
+            "auto_zero_status": self.auto_zero_status,
+            "auto_zero_enabled": self.config.get('auto_zero_enabled', False),
+            "auto_zero_limit": self.config.get('auto_zero_loss_limit', -500)
         }

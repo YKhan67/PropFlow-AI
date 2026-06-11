@@ -42,6 +42,8 @@ class GoldScalperStrategy:
         if len(df) < 50:
             return self._hold(symbol, "Insufficient data")
 
+        is_aggressive = self.config.get('aggressive_mode', False)
+
         # 1. RSI Calculations
         close = df['close'].values.astype(np.float64)
         high = df['high'].values.astype(np.float64)
@@ -80,9 +82,14 @@ class GoldScalperStrategy:
         prev_low = low[-2]
 
         # ENTRY LOGIC (BUY ONLY)
-        is_rsi_bullish = curr_rsi > 60 and curr_rsi > curr_rsi_ma
+        rsi_threshold = 50 if is_aggressive else 60
+        is_rsi_bullish = curr_rsi > rsi_threshold and curr_rsi > curr_rsi_ma
         is_candle_bullish = curr_close > prev_close
-        is_trend_strong = curr_adx > prev_adx and plus_di > minus_di
+
+        if is_aggressive:
+            is_trend_strong = plus_di > minus_di # Ignore ADX slope in aggressive mode
+        else:
+            is_trend_strong = curr_adx > prev_adx and plus_di > minus_di
 
         # EXIT LOGIC (Current Close < Previous Low)
         is_exit_signal = curr_close < prev_low

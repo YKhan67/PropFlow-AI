@@ -78,7 +78,7 @@ class RegimeParams:
     bb_multiplier: float = 1.5 # Multiplier for Bollinger Bands
 
     @classmethod
-    def for_regime(cls, regime: str, symbol: str = "", timeframe: str = "H1") -> "RegimeParams":
+    def for_regime(cls, regime: str, symbol: str = "", timeframe: str = "H1", is_aggressive: bool = False) -> "RegimeParams":
         """Return appropriate params for the detected market regime, adjusted dynamically for timeframe."""
         params = cls()
 
@@ -101,7 +101,7 @@ class RegimeParams:
             params.confidence_threshold = 0.15 * scaling_factor
         elif regime == "ranging":
             params.trend_threshold = 0.4 * scaling_factor
-            params.confidence_threshold = 0.3 # Keep confidence stable for mean reversion
+            params.confidence_threshold = 0.3
         elif regime == "volatile":
             params.trend_threshold = 0.5 * scaling_factor
             params.confidence_threshold = 0.4 * scaling_factor
@@ -109,7 +109,13 @@ class RegimeParams:
             params.trend_threshold = 0.3 * scaling_factor
             params.confidence_threshold = 0.4
 
-        # 2. Asset-Specific Adjustments
+        # 2. Aggressive Mode Adjustments (Lower thresholds to capture more opportunities)
+        if is_aggressive:
+            params.trend_threshold *= 0.6 # 40% lower threshold
+            params.confidence_threshold *= 0.7 # 30% lower confidence required
+            params.bb_multiplier *= 0.9 # Tighter bands for ranges
+
+        # 3. Asset-Specific Adjustments
         is_metal = any(m in symbol.upper() for m in ["XAU", "XAG", "GOLD", "SILVER"])
         if is_metal:
             # Metals need wider thresholds due to high point-value volatility
@@ -270,6 +276,7 @@ class HybridDecisionEngine:
         bar_index: int = -1,
         is_friday: bool = False,
         is_monday: bool = False,
+        is_aggressive: bool = False,
     ) -> EngineDecision:
         """Evaluate a complete trading decision for a specific symbol."""
         if not self.is_trained(symbol):
@@ -286,8 +293,8 @@ class HybridDecisionEngine:
 
         logging.info(f"[{symbol}] Detected Regime: {current_regime.upper()}")
 
-        # 2. Regime-adaptive parameters (Now adjusted for timeframe)
-        regime_params = RegimeParams.for_regime(current_regime, symbol, timeframe)
+        # 2. Regime-adaptive parameters (Now adjusted for timeframe and aggression)
+        regime_params = RegimeParams.for_regime(current_regime, symbol, timeframe, is_aggressive)
 
         # 3. Feature matrix for signal logic
         feature_matrix, feature_names = extract_features(ohlcv, self.feature_config)

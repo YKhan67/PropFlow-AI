@@ -66,6 +66,10 @@ export interface SystemStatus {
   active_trades_count: number;
   market_regime: string;
   active_strategy: string;
+  auto_zero_status: string;
+  auto_zero_enabled: boolean;
+  auto_zero_limit: number;
+  aggressive_mode: boolean;
 }
 
 export interface RiskConfig {
@@ -80,6 +84,9 @@ export interface RiskConfig {
   active_strategy: "hybrid_hmm" | "quant_engine" | "correlation_reversion" | "gold_scalper";
   quant_zscore_entry?: number;
   quant_zscore_exit?: number;
+  auto_zero_enabled?: boolean;
+  auto_zero_loss_limit?: number;
+  aggressive_mode?: boolean;
 }
 
 export interface AppConfig {
@@ -168,6 +175,18 @@ export const apiService = {
   async closeProfitableTrades() {
     const response = await fetch(`${API_BASE_URL}/trades/close-profitable`, { method: "POST" });
     if (!response.ok) throw new Error("Failed to close profitable trades");
+    return response.json();
+  },
+
+  async zeroBuySellExposure(): Promise<{
+    success: boolean;
+    error?: string;
+    offset_amount?: number;
+    before?: { buy_pl: number; sell_pl: number; net_pl: number };
+    after?: { buy_pl: number; sell_pl: number; net_pl: number };
+  }> {
+    const response = await fetch(`${API_BASE_URL}/trades/zero-exposure`, { method: "POST" });
+    if (!response.ok) throw new Error("Failed to zero exposure");
     return response.json();
   },
 

@@ -20,7 +20,16 @@ class HMMHandler:
                 self.ai.train_regime_model(symbol, df)
                 logging.info(f"[{symbol}] HMM Training Complete. Labels: {self.ai.detectors[symbol]._state_labels}")
 
-            decision = self.ai.evaluate(df, symbol=symbol, timeframe=timeframe_str)
+            is_aggressive = self.risk_manager.config.get('aggressive_mode', False)
+
+            # Sync aggressive parameters to SignalGate
+            if is_aggressive:
+                # Reduce cooldown by 50% in aggressive mode
+                self.ai.signal_gate.dd_config.min_time_between_trades_seconds = self.risk_manager.config.get('min_time_between_trades', 300) // 2
+            else:
+                self.ai.signal_gate.dd_config.min_time_between_trades_seconds = self.risk_manager.config.get('min_time_between_trades', 300)
+
+            decision = self.ai.evaluate(df, symbol=symbol, timeframe=timeframe_str, is_aggressive=is_aggressive)
 
             signal = None
             if decision.is_actionable:

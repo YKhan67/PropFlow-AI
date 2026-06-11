@@ -22,10 +22,7 @@ logger = logging.getLogger("PropFlow-AI")
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "settings.json")
 
 def load_settings():
-    if os.path.exists(SETTINGS_FILE):
-        with open(SETTINGS_FILE, "r") as f:
-            return json.load(f)
-    return {
+    defaults = {
         'risk': {
             'max_daily_drawdown': 0.05,
             'max_total_drawdown': 0.10,
@@ -38,7 +35,10 @@ def load_settings():
             'active_strategy': "hybrid_hmm",
             'quant_zscore_entry': 2.0,
             'quant_zscore_exit': 0.5,
-            'correlation_threshold': 0.8
+            'correlation_threshold': 0.8,
+            'auto_zero_enabled': False,
+            'auto_zero_loss_limit': -500.0,
+            'aggressive_mode': False
         },
         'symbols': ["EURUSD", "GBPUSD"],
         'symbols_quant': ["EURUSD", "GBPUSD", "USDJPY"],
@@ -46,6 +46,21 @@ def load_settings():
         'symbols_gold': ["XAUUSD"],
         'timeframe': "H1"
     }
+
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                saved = json.load(f)
+                # Deep merge risk defaults
+                if 'risk' in saved:
+                    for k, v in defaults['risk'].items():
+                        if k not in saved['risk']:
+                            saved['risk'][k] = v
+                return saved
+        except Exception as e:
+            logging.error(f"Failed to load settings: {e}")
+
+    return defaults
 
 def save_settings(data):
     with open(SETTINGS_FILE, "w") as f:
@@ -119,9 +134,14 @@ def get_config():
 def update_config(new_config: dict):
     global config_data
     if 'risk' in new_config:
+        # Log setting changes for debugging
+        if 'aggressive_mode' in new_config['risk']:
+            logging.info(f"Setting Aggressive Mode to: {new_config['risk']['aggressive_mode']}")
+
         config_data['risk'].update(new_config['risk'])
-        engine.risk_manager.config.update(config_data['risk'])
-        engine.risk_manager.starting_balance = config_data['risk'].get('account_balance', 100000.0)
+        if engine and engine.risk_manager:
+            engine.risk_manager.config.update(config_data['risk'])
+            engine.risk_manager.starting_balance = config_data['risk'].get('account_balance', 100000.0)
 
         # Update AI Engines if they exist
         if hasattr(engine, 'hmm_handler'):
@@ -195,7 +215,10 @@ def get_status():
             },
             "active_trades_count": len(engine.get_active_trades()),
             "market_regime": engine.get_market_regime(),
-            "active_strategy": config_data['risk'].get('active_strategy', 'hybrid_hmm')
+            "active_strategy": config_data['risk'].get('active_strategy', 'hybrid_hmm'),
+            "auto_zero_enabled": risk.get("auto_zero_enabled", False),
+            "auto_zero_status": risk.get("auto_zero_status", "Waiting"),
+            "aggressive_mode": config_data['risk'].get('aggressive_mode', False)
         }
     except Exception as e:
         logging.error(f"Status error: {e}")
@@ -215,6 +238,11 @@ def close_profitable_trades(background_tasks: BackgroundTasks):
     # Running as a background task to ensure it doesn't block the API if many trades exist
     background_tasks.add_task(engine.close_profitable_trades)
     return {"message": "Closing profitable trades in background"}
+
+@app.post("/trades/zero-exposure")
+def zero_buy_sell_exposure():
+    result = engine.zero_buy_sell_exposure()
+    return result
 
 @app.post("/trades/close/{ticket}")
 def close_trade(ticket: int):

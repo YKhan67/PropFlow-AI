@@ -12,6 +12,7 @@ export default function RiskPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [autoZeroStatus, setAutoZeroStatus] = useState("Waiting");
 
   useEffect(() => {
     loadConfig();
@@ -19,8 +20,12 @@ export default function RiskPage() {
 
   const loadConfig = async () => {
     try {
-      const fullConfig = await apiService.getConfig();
+      const [fullConfig, status] = await Promise.all([
+        apiService.getConfig(),
+        apiService.getStatus()
+      ]);
       setConfig(fullConfig.risk);
+      setAutoZeroStatus(status.auto_zero_status || "Waiting");
       setCooldownStr(formatSecondsToMMSS(fullConfig.risk.min_time_between_trades || 0));
     } catch (error) {
       console.error("Failed to load risk config", error);
@@ -236,6 +241,61 @@ export default function RiskPage() {
                     />
                     <p className="text-[10px] text-white/40 mt-2">
                       Current delay: <span className="text-amber-400">{config?.min_time_between_trades || 0} seconds</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Auto Zero Buy/Sell */}
+              <div className="rounded-xl border border-white/10 bg-white/5 p-6 md:col-span-2">
+                <div className="flex items-center gap-2 mb-4 text-emerald-400">
+                  <Shield className="h-5 w-5" />
+                  <h2 className="font-semibold">Auto Zero Buy/Sell</h2>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between py-2">
+                      <span className="text-sm text-white/60">Enable Auto Zero Buy/Sell</span>
+                      <button
+                        type="button"
+                        onClick={() => updateField("auto_zero_enabled", !config?.auto_zero_enabled)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${config?.auto_zero_enabled ? 'bg-emerald-500' : 'bg-white/10'}`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${config?.auto_zero_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-white/60 mb-1">Auto Zero Loss Limit ($)</label>
+                      <input
+                        type="number"
+                        step="1"
+                        max="-1"
+                        value={config?.auto_zero_loss_limit || -500}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          updateField("auto_zero_loss_limit", val);
+                        }}
+                        className="w-full bg-black border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
+                      />
+                      {config && (config.auto_zero_loss_limit || 0) >= 0 && (
+                        <p className="text-xs text-rose-400 mt-1">Loss limit must be a negative number.</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-black/40 p-4 border border-white/5">
+                    <h3 className="text-xs font-bold text-white/40 uppercase mb-3">Current Status</h3>
+                    <div className="flex items-center gap-3">
+                      <div className={`h-3 w-3 rounded-full animate-pulse ${
+                        autoZeroStatus === 'Executed' ? 'bg-emerald-500' :
+                        autoZeroStatus === 'Triggered' ? 'bg-amber-500' :
+                        autoZeroStatus === 'Failed' ? 'bg-rose-500' : 'bg-blue-500'
+                      }`} />
+                      <span className="text-xl font-mono font-bold tracking-tight">{autoZeroStatus}</span>
+                    </div>
+                    <p className="text-[10px] text-white/30 mt-4 leading-relaxed">
+                      Automatically neutralizes opposing exposure when Net P/L hits the threshold.
+                      Trigger resets once Net P/L recovers above the limit.
                     </p>
                   </div>
                 </div>

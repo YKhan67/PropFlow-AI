@@ -72,9 +72,7 @@ class FXQuantEngine:
 
     def evaluate(self, symbol: str, ohlcv: pd.DataFrame, all_tickers: Dict, current_price: float) -> QuantDecision:
         """Full systemic analysis across all institutional layers."""
-
-        # LOGGING START OF ANALYSIS
-        # logging.info(f"[{symbol}] Running Institutional FX-QUANT Analysis...")
+        is_aggressive = self.config.get('aggressive_mode', False)
 
         # REQUIREMENT: PAIR VALIDATION
         pair_category = self._gatekeeper_check(symbol)
@@ -100,10 +98,11 @@ class FXQuantEngine:
         cost_valid = self._module_6_execution_model(symbol, all_tickers)
 
         # FINAL SYSTEM RULES & SIGNAL VALIDATION
+        z_entry = self.z_entry * 0.7 if is_aggressive else self.z_entry
         confirmations = 0
-        if abs(stat_arb_z) >= self.z_entry: confirmations += 1
+        if abs(stat_arb_z) >= z_entry: confirmations += 1
         if correlation_consistent: confirmations += 1
-        if abs(synthetic_z) >= 1.5: confirmations += 1
+        if abs(synthetic_z) >= (1.0 if is_aggressive else 1.5): confirmations += 1
         if anchor_stable: confirmations += 1
 
         final_direction = "hold"
@@ -112,9 +111,12 @@ class FXQuantEngine:
         confidence = 0.0
 
         # Institutional Rule: Signal valid only if Stat-Arb triggered AND at least 2 independent confirmations
-        if confirmations >= 2 and abs(stat_arb_z) >= self.z_entry:
-            if regime_suitability == "YES":
-                if cost_valid:
+        # Aggressive: only 1 confirmation needed if Z-score is strong
+        req_confirmations = 1 if is_aggressive else 2
+
+        if confirmations >= req_confirmations and abs(stat_arb_z) >= z_entry:
+            if regime_suitability == "YES" or is_aggressive:
+                if cost_valid or is_aggressive: # Ignore spread in aggressive mode
                     trade_status = "executed"
                     final_direction = "long" if stat_arb_z < 0 else "short"
                     rejection_reason = ""

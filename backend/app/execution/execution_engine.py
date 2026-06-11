@@ -110,6 +110,11 @@ class ExecutionEngine:
                     # Update Risk & History
                     new_equity = self.account_cache.get("equity", self.risk_manager.starting_balance)
                     self.risk_manager.update_equity(new_equity)
+
+                    # Continuous Auto Zero Matcher (Independent of engine running status)
+                    if self.risk_manager.config.get('auto_zero_enabled', False):
+                        self.continuous_zero_matcher()
+
                     self.equity_history.append({"time": now, "equity": new_equity})
                     if len(self.equity_history) > 100: self.equity_history.pop(0)
 
@@ -283,6 +288,107 @@ class ExecutionEngine:
             self.active_trades = self.bridge.get_open_positions()
 
         return closed_count
+
+    def zero_buy_sell_exposure(self):
+        """
+        Institutional Exposure Balancer.
+        Neutralizes hedged Buy/Sell exposure while preserving net P/L.
+        Crucial Rule: Must match a GAIN on one side with a LOSS on the other side.
+        """
+        with self.data_lock:
+            trades = list(self.active_trades)
+
+        if not trades:
+            return {"success": False, "error": "No active trades found."}
+
+        buy_trades = [t for t in trades if t['type'] == 'BUY']
+        sell_trades = [t for t in trades if t['type'] == 'SELL']
+
+        total_buy_pl = sum(t.get('profit', 0) for t in buy_trades)
+        total_sell_pl = sum(t.get('profit', 0) for t in sell_trades)
+
+        # LOGIC: We can only neutralize without balance impact if one side is positive and one is negative.
+        # If both are negative, closing them together creates a larger realized loss.
+        if total_buy_pl * total_sell_pl >= 0:
+            return {
+                "success": False,
+                "error": f"Unable to zero positions. Opposing P/L signs are required to preserve balance. (Buy: ${total_buy_pl:.2f}, Sell: ${total_sell_pl:.2f})"
+            }
+
+        # Target magnitude is the smaller absolute value
+        target_magnitude = min(abs(total_buy_pl), abs(total_sell_pl))
+        logging.info(f"[Zero Routine] Neutralizing ${target_magnitude:.2f} of hedged exposure.")
+
+        def execute_offset_on_side(side_trades, amount_to_close):
+            remaining = amount_to_close
+            # Sort by magnitude descending to minimize ticket count
+            for t in sorted(side_trades, key=lambda x: abs(x.get('profit', 0)), reverse=True):
+                if remaining <= 0.05: break
+
+                p_mag = abs(t.get('profit', 0))
+                if p_mag <= 0: continue
+
+                if p_mag <= remaining + 0.1:
+                    # Close full position
+                    self.bridge.close_position(t['id'])
+                    remaining -= p_mag
+                else:
+                    # Partial close for exact balancing
+                    ratio = remaining / p_mag
+                    close_vol = round(t['volume'] * ratio, 2)
+                    if close_vol >= 0.01:
+                        self.bridge.close_position(t['id'], volume=close_vol)
+                    remaining = 0
+            return remaining
+
+        # Execution
+        execute_offset_on_side(buy_trades, target_magnitude)
+        execute_offset_on_side(sell_trades, target_magnitude)
+
+        # Force refresh state
+        self.active_trades = self.bridge.get_open_positions()
+        return {"success": True, "offset": target_magnitude}
+
+    def continuous_zero_matcher(self):
+        """
+        Independent Matcher: Continuously offsets opposing exposure in small increments.
+        Only pairs POSITIVE trades with NEGATIVE trades to keep balance unchanged.
+        """
+        with self.data_lock:
+            trades = list(self.active_trades)
+
+        if len(trades) < 2: return
+
+        # Split all trades into Positive and Negative groups
+        profits = [t for t in trades if t.get('profit', 0) > 5.0]
+        losses = [t for t in trades if t.get('profit', 0) < -5.0]
+
+        if not profits or not losses: return
+
+        # Strategy: Match the first profit trade with the first loss trade that is on an OPPOSITE side
+        for pt in profits:
+            p_mag = pt.get('profit', 0)
+            for lt in losses:
+                l_mag = abs(lt.get('profit', 0))
+
+                # Check for opposite side to reduce hedged exposure
+                if pt['type'] != lt['type']:
+                    # Amount we can neutralize is the smaller of the two
+                    offset = min(p_mag, l_mag)
+
+                    logging.info(f"[Auto Zero] Neutralizing ${offset:.2f} (Profit {pt['type']} {pt['id']} vs Loss {lt['type']} {lt['id']})")
+
+                    # Process closure for Profit Trade
+                    if p_mag <= offset + 0.1: self.bridge.close_position(pt['id'])
+                    else: self.bridge.close_position(pt['id'], volume=round(pt['volume'] * (offset/p_mag), 2))
+
+                    # Process closure for Loss Trade
+                    if l_mag <= offset + 0.1: self.bridge.close_position(lt['id'])
+                    else: self.bridge.close_position(lt['id'], volume=round(lt['volume'] * (offset/l_mag), 2))
+
+                    # Refresh state and exit to next loop (throttle)
+                    self.active_trades = self.bridge.get_open_positions()
+                    return
 
     def calculate_total_pnl(self):
         return sum(t.get('profit', 0) + t.get('commission', 0) + t.get('swap', 0) for t in self.active_trades)
