@@ -14,7 +14,7 @@
         "auto_zero_loss_limit": -100000,
         "auto_zero_enabled": false,
         "correlation_threshold": 0.8,
-        "aggressive_mode": true
+        "aggressive_mode": false
     },
     "symbols": [
         "XAUUSD"
