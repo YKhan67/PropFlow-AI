@@ -11,7 +11,7 @@
         "active_strategy": "hybrid_hmm",
         "quant_zscore_entry": 1.8,
         "quant_zscore_exit": 0.7,
-        "auto_zero_loss_limit": -100000,
+        "auto_zero_loss_limit": -20000,
         "auto_zero_enabled": false,
         "correlation_threshold": 0.8,
         "aggressive_mode": false
